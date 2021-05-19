@@ -11,7 +11,7 @@ from PIL import Image
 from thop import profile
 
 import model
-from utils import torch_msssim
+from utils import torch_msssim, ops
 from anchors import balle
 from datetime import datetime
 
@@ -39,22 +39,46 @@ def add_noise(x):
     noise = torch.Tensor(noise).cuda()
     return x + noise
 
-def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
+def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     TRAINING = True
-    GPU = True
+    dev_id = "cuda:0"
     # read image
     precise = 16
+    C = 3
+    if crop == None:
+        tile = 64.
+    else:
+        tile = crop * 1.0
     # print('====> Encoding Image:', im_dir)
 
-    # Writer will output to ./runs/ directory by default
-    TIMESTAMP = "{0:%Y-%m-%dT%H-%M-%S/}".format(datetime.now())
+    if args.log:
+        # Writer will output to ./runs/ directory by default
+        TIMESTAMP = "{0:%Y-%m-%dT%H-%M-%S/}".format(datetime.now())
 
-    tensor_log_path = './logs'
-    if not os.path.exists(tensor_log_path):
-        os.mkdir(tensor_log_path)
-    writer = SummaryWriter(tensor_log_path+'/'+TIMESTAMP)
-    # writer = SummaryWriter("./logs/")
+        tensor_log_path = './logs'
+        if not os.path.exists(tensor_log_path):
+            os.mkdir(tensor_log_path)
+        writer = SummaryWriter(tensor_log_path+'/'+TIMESTAMP)
+        # writer = SummaryWriter("./logs/")
+
+    ## model initalization
+    MODEL = args.model
+    quality = args.quality
+    assert MODEL in ["factorized", "hyper", "context", "cheng2020", "nonlocal"], "'%s' not in {'factorized', 'hyper', 'context', 'cheng2020', 'nonlocal'} for param '-m'"%MODEL
+    if MODEL == "nonlocal":
+        image_comp = model.ImageCompression(256)
+        image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
+        # image_comp.load_state_dict(torch.load(checkpoint_dir).state_dict())
+        # torch.save(image_comp.state_dict(), "./checkpoints/elic-0.0.1/ae.pkl")
+        image_comp.to(dev_id).eval()
+        print("[ ARCH  ]:", MODEL) 
+    if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
+        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric).to(dev_id)
+        print("[ ARCH  ]:", MODEL, quality, args.metric)
+    # Gradient Mask
+    gnet = Gradient_Net().to(dev_id)
+    #msssim_func = msssim_func.cuda()
 
     # img_s = Image.open(source_dir).resize((16,16))
     img_s = Image.open(args.source)
@@ -67,67 +91,55 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     else:
         H, W, _ = img_s.shape
 
-    # img_t = Image.open(target_dir).resize((64,64))
-    # img_t = Image.open(target_dir)
-    # img_t = np.array(img_t)/255.0/10.0+0.5
-    # img_t = np.array(img_t)/255.0
-
-    # if len(img_t.shape) < 3:
-    #     H, W = img_t.shape
-    #     img_t = np.tile(img_t.reshape((H,W,1)), (1,1,3))
-    # else:
-    #     H, W, _ = img_t.shape
-
     num_pixels = H * W
-
-    C = 3
-    if crop == None:
-        tile = 64.
-    else:
-        tile = crop * 1.0
-
     H_PAD = int(tile * np.ceil(H / tile))
     W_PAD = int(tile * np.ceil(W / tile))
     PADDING = 0
+    
     im_s = np.zeros([H_PAD, W_PAD, 3], dtype='float32')
     im_s[PADDING:H+PADDING, PADDING:W+PADDING, :] = img_s[:, :, :3]
     im_s = torch.FloatTensor(im_s)
-
-    # im_t = np.zeros([H_PAD, W_PAD, 3], dtype='float32')
-    # im_t[PADDING:H+PADDING, PADDING:W+PADDING, :] = img_t[:, :, :3]
-    # im_t = torch.FloatTensor(im_t)
-
-    # model initalization
-    MODEL = args.model
-    quality = args.quality
-    if MODEL == "nonlocal":
-        image_comp = model.ImageCompression(256)
-        image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
-        # image_comp.load_state_dict(torch.load(checkpoint_dir).state_dict())
-        # torch.save(image_comp.state_dict(), "./checkpoints/elic-0.0.1/ae.pkl")
-        image_comp.eval()
-    if MODEL in ["factorized", "hyper", "context"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric)
-        print(MODEL, quality, args.metric)
-    # Gradient Mask
-    gnet = Gradient_Net().cuda()
-    if GPU:
-        image_comp.cuda()
-        #msssim_func = msssim_func.cuda()
-        im_s = im_s.cuda()
-        if args.target != None:
-            im_t = im_t.cuda()
-
     im_s = im_s.permute(2, 0, 1).contiguous()
-    im_s = im_s.view(1, C, H_PAD, W_PAD)
-    if args.target != None:
-        im_t = im_t.permute(2, 0, 1).contiguous()
-        im_t = im_t.view(1, C, H_PAD, W_PAD)
+    im_s = im_s.view(1, C, H_PAD, W_PAD).to(dev_id)
 
-    mssim_func = torch_msssim.MS_SSIM(max_val=1).cuda()
+    if args.target != None:
+        print("[ ===== ]: Target Attack")
+        # img_t = Image.open(args.target).resize((64,64))
+        img_t = Image.open(args.target)
+        # img_t = np.array(img_t)/255.0/10.0+0.5
+        img_t = np.array(img_t)/255.0
+
+        if len(img_t.shape) < 3:
+            H, W = img_t.shape
+            img_t = np.tile(img_t.reshape((H,W,1)), (1,1,3))
+        else:
+            H, W, _ = img_t.shape
+        
+        im_t = np.zeros([H_PAD, W_PAD, 3], dtype='float32')
+        im_t[PADDING:H+PADDING, PADDING:W+PADDING, :] = img_t[:, :, :3]
+        im_t = torch.FloatTensor(im_t)        
+        im_t = im_t.permute(2, 0, 1).contiguous()
+        im_t = im_t.view(1, C, H_PAD, W_PAD).to(dev_id)
+        with torch.no_grad():
+            output_t, _, _, _, _ = image_comp(im_t, False, CONTEXT, POSTPROCESS)
+        
+        ## TODO: background masking
+        mask = torch.ones(1,C,H_PAD,W_PAD)
+        # mask[:,:, PADDING:H+PADDING, PADDING:W+PADDING] = torch.zeros(1,C,H,W)
+        # x0,y0 = 83,78
+        # x1,y1 = 151,103
+        x0,y0 = 0,0
+        x1,y1 = W,H
+        mask[:,:, y0:y1, x0:x1] = torch.zeros(1,C,y1-y0,x1-x0) #(y0, y1), (x0, x1)
+        mask_bkg = mask.to(dev_id)
+        mask_tar = 1. - mask_bkg
+
+    mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
     with torch.no_grad():
-        mask = gnet(im_s)
-        output_s, y_main_, y_hyper, p_main, p_hyper = image_comp(im_s, False, CONTEXT, POSTPROCESS)  
+        # mask = gnet(im_s)
+        mask = torch.ones_like(im_s)
+
+        output_s, y_main_, y_hyper, p_main, p_hyper = image_comp(im_s, False, CONTEXT, POSTPROCESS)
         ori_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
         ori_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
         print("Original bpp:", ori_bpp_hyper + ori_bpp_main)
@@ -137,23 +149,35 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     if crop == None:
         # rate
         lamb = args.lamb_attack
+        lamb_bkg = 0.01
         LOSS_FUNC = "L2"
         print("using loss func:", LOSS_FUNC)
         print("Lambda:", lamb)
         # im = im_s.clone().detach().requires_grad_(True) + torch.randn(im_s.size()).cuda()
-        noise = torch.randn(im_s.size())/10.0
+        noise = torch.zeros(im_s.size())
+        if args.target == None:
+            noise = torch.rand(im_s.size()) - 0.5
+
         noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
-        optimizer = torch.optim.Adam([noise],lr=1e-3)
+        optimizer = torch.optim.Adam([noise],lr=args.lr_attack)
+        
         # im = (im_s+noise/10.0).clone().detach().requires_grad_(True)
 
         # im = im_s.clone().detach().requires_grad_(True)
         # optimizer = torch.optim.Adam([im],lr=1e-3)
 
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)
+        noise_range = 0.5
         for i in range(args.steps):
-            
-            im_in = torch.clamp(im_s+mask*noise, min=0., max=1.0)
-            
+            # clip noise range
+            # noise_clipped = torch.clamp(mask*noise, min=-noise_range, max=noise_range)
+            noise_clipped = ops.Up_bound.apply(ops.Low_bound.apply(noise, -noise_range), noise_range)
+            # im_in = torch.clamp(im_s+noise_clipped, min=0., max=1.0)
+            im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
+            if args.target != None:
+                im_in = torch.clamp(im_s+noise, min=0., max=1.0)
+            # print("noised:",im_in)
+            # print("source:",im_s)
             # 1. NO PADDING
             im_in[:,:,H:,:] = 0.
             im_in[:,:,:,W:] = 0.
@@ -161,20 +185,33 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             output, y_main, y_hyper, p_main, p_hyper = image_comp(im_in, TRAINING, CONTEXT, POSTPROCESS)
             output_ = torch.clamp(output, min=0., max=1.0)
 
-            # mse_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(y_t, y_s)
-
             if LOSS_FUNC == "L2":
-                # loss_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(y_s, y_t)
-                loss_o = torch.mean((im_in - output_) * (im_in - output_)) # MSE(x_t, y_t)
-                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))
-                loss = loss_i + lamb * (1-loss_o)
-            
+                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
+                if args.target == None:
+                    # loss_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(y_s, y_)
+                    loss_o = 1. - torch.mean((im_s - output_) * (im_s - output_)) # MSE(x_, y_)
+                else:
+                    # loss_o = torch.mean((output_t - output_) * (output_t - output_)) # MSE(y_t, y_s)
+                    loss_o = torch.mean((im_t - output_) * (im_t - output_)) # MSE(y_t, y_s)
+
             # L1 loss
             if LOSS_FUNC == "L1":
-                loss_o = torch.mean(torch.abs(im_s - output_))
                 loss_i = torch.mean(torch.abs(im_s - im_in))
-                loss = loss_i + lamb * (1-loss_o)
+                if args.target == None:
+                    loss_o = 1.0 - torch.mean(torch.abs(im_s - output_))
+                else:    
+                    loss_o = torch.mean(torch.abs(output_t - output_))
+            
+            if LOSS_FUNC == "masked":
+                loss_i = torch.mean((im_s - im_in) * (im_s - im_in)) * mask_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in)) * mask_bkg
+                loss_o = torch.mean((output_t - output_) * (output_t - output_)) * mask_tar
 
+            loss = loss_i + lamb * loss_o
+            with torch.no_grad():
+                att = torch.tanh((output_s - output_) * (output_s - output_) / (noise_clipped*noise_clipped+0.0001))
+                # print(torch.mean(mask))
+                mask = 0.9999*mask + 0.0001*att
+                # noise_range = 0.9999*noise_range + 0.0001*50/255
             # bpp attack
             # train_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
             # train_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
@@ -191,12 +228,14 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             loss.backward()
             optimizer.step()
 
-            writer.add_scalar('Loss/mse_all', loss.item(), i)
-            # writer.add_scalar('Loss/mse_in', mse_i.item(), i)
-            # writer.add_scalar('Loss/mse_out',  mse_o.item(), i)
-            # writer.add_scalar('Loss/bpp',  bpp.item(), i)
+            if args.log:
+                writer.add_scalar('Loss/mse_all', loss.item(), i)
+                writer.add_scalar('Loss/mse_in', mse_i.item(), i)
+                writer.add_scalar('Loss/mse_out',  mse_o.item(), i)
+                writer.add_scalar('Loss/bpp',  bpp.item(), i)
 
-            if i % (args.steps//3) == 0:
+            if i % (args.steps//30) == 0:
+                # print(torch.mean(mask), torch.mean(att))
                 print("step:", i, "overall loss:", loss.item(), "loss_rec:", loss_o.item(), "loss_in:", loss_i.item())
                 lr_scheduler.step()
                 with torch.no_grad():
@@ -216,7 +255,6 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     fin = np.round(fin * 255.0)
                     fin = fin.astype('uint8')
                     fin = fin.transpose(1, 2, 0)
-                    
                     img = Image.fromarray(fin[:H, :W, :])
                     # img = Image.fromarray(fin[PADDING:H+PADDING, PADDING:W+PADDING, :])
                     
@@ -254,8 +292,8 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     # img = Image.fromarray(out[PADDING:H+PADDING, PADDING:W+PADDING, :])
                     img = Image.fromarray(out[:H, :W, :])
                     img.save("./attack/kodak/fake%d_out_%0.4f_%0.8f.png"%(i, bpp.item(), loss.item()))
-
-    writer.close()
+    if args.log:
+        writer.close()
     
     # attacked recons
     img.save("./attack/kodak/final_out.png")
@@ -290,25 +328,28 @@ if __name__ == "__main__":
     parser.add_argument('-m',      dest='model',  type=str, default="nonlocal", help="compress model in 'factor','hyper','context','nonlocal'")
     parser.add_argument('-metric', dest='metric', type=str, default="ms-ssim",  help="mse or ms-ssim")
     parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
+    
     # attack config
     parser.add_argument('-step',dest='steps',       type=int,   default=10001,  help="attack iteration steps")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
+    parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
     parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")
 
+    parser.add_argument('--log', dest='log', action='store_true')
     args = parser.parse_args()
+    print("============================================================")
+    print("[ IMAGE ]:", args.source, "->", args.target)
 
-    checkpoints = glob('./ckpts/%d_%s/ae_%d_*' %(int(args.lamb), args.job, args.ckpt_num))
+    checkpoint = None
     if args.model == "nonlocal":
-        print("CONTEXT:", args.context)
+        checkpoint = glob('./ckpts/%d_%s/ae_%d_*' %(int(args.lamb), args.job, args.ckpt_num))[0]
+        print("[CONTEXT]:", args.context)
         print("==== Loading Checkpoint:", checkpoint, '====')
-    # random select in 0
-    # target = "/home/tong/LearnedCompression/mnist/tmp/roof_angle.png"
+    
+    ## random select in 0
     # target = "/ct/code/mnist_png/testing/0/294.png"
-    # target = "/ct/code/LearnedCompression/attack/colorattacker.png"
-    # target = "/ct/code/LearnedCompression/attack/licenseplate/MZ8723_180x180.png"
-
-    # random select in [1-9]
+    ## random select in [1-9]
     # source = "/home/tong/mnist_png/testing/9/281.png"
     # source = "/home/tong/mnist_png/testing/8/110.png"
     # source = "/home/tong/mnist_png/testing/7/411.png"
@@ -318,9 +359,15 @@ if __name__ == "__main__":
     # source = "/home/tong/mnist_png/testing/3/1426.png"
     # source = "/ct/code/mnist_png/testing/2/72.png"
     # source = "/home/tong/mnist_png/testing/1/430.png"
+
+    # target = "/ct/code/LearnedCompression/attack/colorattacker.png"
     # source = "/ct/code/LearnedCompression/attack/colorchecker.png"
+
+    # target = "/ct/code/LearnedCompression/attack/licenseplate/MZ8723_180x180.png" 
     # source = "/ct/code/LearnedCompression/attack/licenseplate/MZ2837_180x180.png"
+
+    # target = "/home/tong/LearnedCompression/mnist/tmp/roof_angle.png"
     # source = "/home/tong/LearnedCompression/mnist/tmp/roof_psnr.png"
-    for checkpoint in checkpoints:
-        bpp, psnr = test(args, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
+
+    bpp, psnr = attack(args, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
     # print(checkpoint, "bpps:%0.4f, psnr:%0.4f" %(bpp, psnr))
