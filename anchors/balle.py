@@ -9,17 +9,17 @@ from compressai.zoo import bmshj2018_factorized, bmshj2018_hyperprior, mbt2018, 
 
 
 class Image_coder(torch.nn.Module):
-    def __init__(self, MODEL, quality, metric):
+    def __init__(self, MODEL, quality, metric, pretrained=True):
         super(Image_coder, self).__init__()
         self.MODEL = MODEL
         if MODEL == "factorized":
-            self.net = bmshj2018_factorized(quality=quality, metric=metric, pretrained=True)
+            self.net = bmshj2018_factorized(quality=quality, metric=metric, pretrained=pretrained)
         if MODEL == "hyper":
-            self.net = bmshj2018_hyperprior(quality=quality, metric=metric, pretrained=True)
+            self.net = bmshj2018_hyperprior(quality=quality, metric=metric, pretrained=pretrained)
         if MODEL == "context":
-            self.net = mbt2018(quality=quality, metric=metric, pretrained=True)
+            self.net = mbt2018(quality=quality, metric=metric, pretrained=pretrained)
         if MODEL == "cheng2020":
-            self.net = cheng2020_anchor(quality=quality, metric=metric, pretrained=True)
+            self.net = cheng2020_anchor(quality=quality, metric=metric, pretrained=pretrained)
 
     def forward(self, x, TRAINING, CONTEXT, POSTPROCESS):
         if TRAINING:
@@ -51,7 +51,7 @@ class Image_coder(torch.nn.Module):
             _, y_likelihoods = self.net.gaussian_conditional(y, scales_hat, means=means_hat)
 
         x_hat = self.net.g_s(y_hat)        
-        return x_hat, y_hat, z_hat, y_likelihoods, z_likelihoods
+        return x_hat, y, z_hat, y_likelihoods, z_likelihoods
 
 # TEST
 # MODEL = sys.argv[2] #factorized, hyper, context

@@ -65,17 +65,36 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     ## model initalization
     MODEL = args.model
     quality = args.quality
-    assert MODEL in ["factorized", "hyper", "context", "cheng2020", "nonlocal"], "'%s' not in {'factorized', 'hyper', 'context', 'cheng2020', 'nonlocal'} for param '-m'"%MODEL
-    if MODEL == "nonlocal":
+    arch_lists = ["factorized", "hyper", "context", "cheng2020", "nlaic", "elic"]
+    assert MODEL in arch_lists, f"'{MODEL}' not in {arch_lists} for param '-m'"
+    if MODEL == "elic":
         image_comp = model.ImageCompression(256)
         image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
         # image_comp.load_state_dict(torch.load(checkpoint_dir).state_dict())
         # torch.save(image_comp.state_dict(), "./checkpoints/elic-0.0.1/ae.pkl")
         image_comp.to(dev_id).eval()
         print("[ ARCH  ]:", MODEL) 
+
+    # if MODEL == "nlaic":
+    #     # index - [0-15]
+    #     models = ["mse200", "mse400", "mse800", "mse1600", "mse3200", "mse6400", "mse12800", "mse25600",
+    #       "msssim4", "msssim8", "msssim16", "msssim32", "msssim64", "msssim128", "msssim320", "msssim640"]
+    #     model_index = args.quality
+    #     M, N2 = 192, 128
+    #     if (model_index == 6) or (model_index == 7) or (model_index == 14) or (model_index == 15):
+    #         M, N2 = 256, 192
+    #     image_comp = model.Image_coding(3, M, N2, M, M//2)
+    #     ######################### Load Model #########################
+    #     image_comp.load_state_dict(torch.load(
+    #         os.path.join(checkpoint_dir, models[model_index] + r'.pkl'), map_location='cpu'))
+
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
         image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric).to(dev_id)
         print("[ ARCH  ]:", MODEL, quality, args.metric)
+        if args.download == False:
+            # load from local ckpts
+            image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
+            image_comp.to(dev_id).train()
     # Gradient Mask
     gnet = Gradient_Net().to(dev_id)
     #msssim_func = msssim_func.cuda()
@@ -128,8 +147,12 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         # mask[:,:, PADDING:H+PADDING, PADDING:W+PADDING] = torch.zeros(1,C,H,W)
         # x0,y0 = 83,78
         # x1,y1 = 151,103
-        x0,y0 = 0,0
-        x1,y1 = W,H
+        if args.mask_loc != None:
+            lamb_bkg = args.lamb_bkg
+            lamb_tar = args.lamb_tar
+            print(args.mask_loc, "lamb_bkg:", lamb_bkg)
+        x0,x1,y0,y1 = args.mask_loc # W, H
+        
         mask[:,:, y0:y1, x0:x1] = torch.zeros(1,C,y1-y0,x1-x0) #(y0, y1), (x0, x1)
         mask_bkg = mask.to(dev_id)
         mask_tar = 1. - mask_bkg
@@ -149,7 +172,6 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     if crop == None:
         # rate
         lamb = args.lamb_attack
-        lamb_bkg = 0.01
         LOSS_FUNC = "L2"
         print("using loss func:", LOSS_FUNC)
         print("Lambda:", lamb)
@@ -168,6 +190,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)
         noise_range = 0.5
+        print("[WARNINTG] Quantization Skipped!")
         for i in range(args.steps):
             # clip noise range
             # noise_clipped = torch.clamp(mask*noise, min=-noise_range, max=noise_range)
@@ -183,16 +206,21 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             im_in[:,:,:,W:] = 0.
             
             output, y_main, y_hyper, p_main, p_hyper = image_comp(im_in, TRAINING, CONTEXT, POSTPROCESS)
-            output_ = torch.clamp(output, min=0., max=1.0)
+            # output_ = torch.clamp(output, min=0., max=1.0)
+            # output_ = ops.Up_bound.apply(ops.Low_bound.apply(output, 0.), 1.)
 
-            if LOSS_FUNC == "L2":
+            x_ = image_comp.net.g_s(y_main)
+            output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
+
+            if LOSS_FUNC == "L2" and args.mask_loc == None:
+                # print("[Loss] L2 with no mask")
                 loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
                 if args.target == None:
                     # loss_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(y_s, y_)
                     loss_o = 1. - torch.mean((im_s - output_) * (im_s - output_)) # MSE(x_, y_)
                 else:
-                    # loss_o = torch.mean((output_t - output_) * (output_t - output_)) # MSE(y_t, y_s)
-                    loss_o = torch.mean((im_t - output_) * (im_t - output_)) # MSE(y_t, y_s)
+                    loss_o = torch.mean((output_t - output_) * (output_t - output_)) # MSE(y_t, y_s)
+                    # loss_o = torch.mean((im_t - output_) * (im_t - output_)) # MSE(y_t, y_s)
 
             # L1 loss
             if LOSS_FUNC == "L1":
@@ -202,9 +230,16 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                 else:    
                     loss_o = torch.mean(torch.abs(output_t - output_))
             
-            if LOSS_FUNC == "masked":
-                loss_i = torch.mean((im_s - im_in) * (im_s - im_in)) * mask_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in)) * mask_bkg
-                loss_o = torch.mean((output_t - output_) * (output_t - output_)) * mask_tar
+            if LOSS_FUNC == "L2" and args.mask_loc != None:
+                # print("[Loss] L2 with target mask")
+                l1_loss = torch.mean(torch.abs(im_s - im_in) * mask_tar)
+                l2_loss = torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar)
+                loss_tar = 0.01*l1_loss + l2_loss
+                loss_i = lamb_tar * loss_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
+                # loss_i = lamb_tar * torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
+                # loss_i = lamb_tar * torch.mean(torch.abs(im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
+                # loss_o = torch.mean((output_t - output_) * (output_t - output_) * mask_tar)
+                loss_o = torch.mean(torch.abs(output_t - output_) * mask_tar)
 
             loss = loss_i + lamb * loss_o
             with torch.no_grad():
@@ -233,8 +268,14 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                 writer.add_scalar('Loss/mse_in', mse_i.item(), i)
                 writer.add_scalar('Loss/mse_out',  mse_o.item(), i)
                 writer.add_scalar('Loss/bpp',  bpp.item(), i)
-
-            if i % (args.steps//30) == 0:
+            
+            if i%100 == 0:
+                if args.mask_loc != None: 
+                    print(i, "overall loss", loss.item(), "loss_rec", loss_o.item(), "loss_in", loss_i.item(), loss_tar.item())
+                else:
+                    print(i, "overall loss", loss.item(), "loss_rec", loss_o.item(), "loss_in", loss_i.item())
+                    
+            if i % (args.steps//3) == 0:
                 # print(torch.mean(mask), torch.mean(att))
                 print("step:", i, "overall loss:", loss.item(), "loss_rec:", loss_o.item(), "loss_in:", loss_i.item())
                 lr_scheduler.step()
@@ -333,10 +374,15 @@ if __name__ == "__main__":
     parser.add_argument('-step',dest='steps',       type=int,   default=10001,  help="attack iteration steps")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
     parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
+    parser.add_argument("-la_bkg",  dest="lamb_bkg",type=float, default=1.0,    help="attack lambda of background area")
+    parser.add_argument("-la_tar",  dest="lamb_tar",type=float, default=1.0,    help="attack lambda of target area")    
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
     parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")
+    parser.add_argument('--d',  dest='download',    action='store_true')
+    parser.add_argument("-ckpt",dest="ckpt",        type=str,   default=None,   help="local checkpoint dir")
+    parser.add_argument('--log',dest='log', action='store_true')           
+    parser.add_argument('--mask_loc', nargs='+', type=int, default=None)
 
-    parser.add_argument('--log', dest='log', action='store_true')
     args = parser.parse_args()
     print("============================================================")
     print("[ IMAGE ]:", args.source, "->", args.target)
@@ -347,19 +393,6 @@ if __name__ == "__main__":
         print("[CONTEXT]:", args.context)
         print("==== Loading Checkpoint:", checkpoint, '====')
     
-    ## random select in 0
-    # target = "/ct/code/mnist_png/testing/0/294.png"
-    ## random select in [1-9]
-    # source = "/home/tong/mnist_png/testing/9/281.png"
-    # source = "/home/tong/mnist_png/testing/8/110.png"
-    # source = "/home/tong/mnist_png/testing/7/411.png"
-    # source = "/home/tong/mnist_png/testing/6/940.png"
-    # source = "/home/tong/mnist_png/testing/5/509.png"
-    # source = "/home/tong/mnist_png/testing/4/109.png"
-    # source = "/home/tong/mnist_png/testing/3/1426.png"
-    # source = "/ct/code/mnist_png/testing/2/72.png"
-    # source = "/home/tong/mnist_png/testing/1/430.png"
-
     # target = "/ct/code/LearnedCompression/attack/colorattacker.png"
     # source = "/ct/code/LearnedCompression/attack/colorchecker.png"
 
@@ -368,6 +401,6 @@ if __name__ == "__main__":
 
     # target = "/home/tong/LearnedCompression/mnist/tmp/roof_angle.png"
     # source = "/home/tong/LearnedCompression/mnist/tmp/roof_psnr.png"
-
+    checkpoint = args.ckpt
     bpp, psnr = attack(args, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
     # print(checkpoint, "bpps:%0.4f, psnr:%0.4f" %(bpp, psnr))
