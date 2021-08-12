@@ -53,7 +53,8 @@ python attack_rd.py -m hyper -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.22 -step 10
 ```
 python attack_data.py -la 0.2 -step 1001 -m hyper -q 3
 
-python train.py -la 0.1 -q 3 -lr 1e-5
+python train.py -m hyper -la 0.1 -q 3 -lr 1e-5 -ckpt ./ckpts/attack/anchor/xxx --pretrained
+python train.py -m hyper -la 0.1 -q 3 -metric mse -lr 1e-4 -ckpt ./ckpts/attack/anchor/xxx
 
 python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --d
 ```
