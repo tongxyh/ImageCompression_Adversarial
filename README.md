@@ -1,4 +1,4 @@
-# Attack Learned Image Compression
+# Robust Learned Image Compression
 model_dir 的默认值为 $TORCH_HOME/models 其中 $TORCH_HOME 默认值为 ~/.torch. 可以使用 $TORCH_MODEL_ZOO 环境变量来覆盖默认目录
 export TORCH_HOME=/workspace/ct/code/LearnedCompression/ckpts/balle
 
