@@ -15,6 +15,7 @@ from utils import torch_msssim, ops
 from anchors import balle
 from datetime import datetime
 
+import coder
 
 def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
@@ -44,10 +45,11 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         # print("[ ARCH  ]:", MODEL) 
 
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=True).to(dev_id)
+        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.pretrained).to(dev_id)
         # print("[ ARCH  ]:", MODEL, quality, args.metric)
-        if download_model_zoo == False:
+        if args.pretrained == False:
             # load from local ckpts
+            print("Load from local:", checkpoint_dir)
             image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
             image_comp.to(dev_id).eval()
     mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
@@ -114,40 +116,14 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         out = out.transpose(1, 2, 0)
 
         img = Image.fromarray(out[:H, :W, :])
-        img.save("./attack/kodak/out.png")
+        img.save(args.target)
+        # img.save("./attack/kodak/out.png")
 
     return bpp_hyper + bpp_main, psnr, mssim_func(output, im)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    # NIC config
-    parser.add_argument("-cn", "--ckpt_num", type=int,
-                        help="load checkpoint by step number")
-    parser.add_argument("-l", "--lamb", type=float,
-                        default=6400., help="lambda")
-    parser.add_argument("-j", "--job", type=str, default="", help="job name")
-    parser.add_argument('--ctx', dest='context', action='store_true')
-    parser.add_argument('--no-ctx', dest='context', action='store_false')
-    parser.add_argument('--post', dest='post', action='store_true')
-
-    parser.add_argument('-itx',    dest='iter_x', type=int, default=0,          help="iter step updating x")
-    parser.add_argument('-ity',    dest='iter_y', type=int, default=0,          help="iter step updating y")
-    parser.add_argument('-m',      dest='model',  type=str, default="nonlocal", help="compress model in 'factor','hyper','context','nonlocal'")
-    parser.add_argument('-metric', dest='metric', type=str, default="ms-ssim",  help="mse or ms-ssim")
-    parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
-    
-    # attack config
-    parser.add_argument('-step',dest='steps',       type=int,   default=10001,  help="attack iteration steps")
-    parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
-    parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
-    parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
-    parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")
-    parser.add_argument("-ckpt",dest="ckpt",        type=str,   default=None,   help="local checkpoint dir")
-    parser.add_argument('--d',  dest='download',    action='store_true')
-
-    parser.add_argument('--log',dest='log', action='store_true')
-    args = parser.parse_args()
+    args = coder.config()
     print("============================================================")
     print("[ IMAGE ]:", args.source, "->", args.target)
 
@@ -162,4 +138,4 @@ if __name__ == "__main__":
     for image in images:
         args.source = image
         bpp, psnr, quality = test(args, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
-        print(bpp.item(), psnr, quality.item())
+        print("bpp:", bpp.item(), "PSNR:", psnr, "MS-SSIM:", quality.item())

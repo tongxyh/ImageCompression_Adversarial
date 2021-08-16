@@ -57,6 +57,7 @@ python train.py -m hyper -la 0.1 -q 3 -lr 1e-5 -ckpt ./ckpts/attack/anchor/xxx -
 python train.py -m hyper -la 0.1 -q 3 -metric mse -lr 1e-4 -ckpt ./ckpts/attack/anchor/xxx
 
 python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --d
+python visual.py -m hyper -metric ms-ssim -q 3 -s ./attack/kodak/fake3333_ -ckpt ./ckpts/attack/anchor/hyper-3-fromscratch//ae_100_0_0.02102314_0.14399883.pkl
 ```
 
 ## test
