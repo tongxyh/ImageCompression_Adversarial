@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
+import random
 from PIL import Image
 from thop import profile
 
@@ -48,6 +49,13 @@ def load_data(train_data_dir, train_batch_size):
         train_data_dir, 
         transform=train_transform
     )
+    def seed_worker(worker_id):
+        worker_seed = torch.initial_seed() % 2**32
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    g = torch.Generator()
+    g.manual_seed(0)
     
     train_loader = torch.utils.data.DataLoader(
         train_dataset, 
@@ -55,7 +63,9 @@ def load_data(train_data_dir, train_batch_size):
         shuffle=True,
         num_workers=8,
         drop_last=True,
-        pin_memory=True
+        pin_memory=True,
+        worker_init_fn=seed_worker,
+        generator=g
     )
     return train_loader
 
@@ -114,7 +124,7 @@ def train(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
         image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.pretrained).to(dev_id)
         print("[ ARCH  ]:", MODEL, quality, args.metric)
-    image_comp = nn.DataParallel(image_comp, device_ids=[0])
+    # image_comp = nn.DataParallel(image_comp, device_ids=[0])
     # loss_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
     loss_func = lpips.LPIPS(net='alex').to(dev_id) # best forward scores
 
@@ -131,7 +141,12 @@ def train(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     ckpt_dir = args.ckpt
 
     # optimizer 
-    optimizer = torch.optim.Adam(image_comp.parameters(),lr=args.lr_attack)
+    parameters = set(p for n, p in image_comp.named_parameters() if not n.endswith(".quantiles"))
+    aux_parameters = set(p for n, p in image_comp.named_parameters() if n.endswith(".quantiles"))
+    optimizer = torch.optim.Adam(parameters, lr=1e-4)
+    aux_optimizer = torch.optim.Adam(aux_parameters, lr=1e-3)
+
+    # optimizer = torch.optim.Adam(image_comp.parameters(),lr=args.lr_attack)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, lr_decay_iters, gamma=decay_gamma, last_epoch=-1)
     
     for epoch in range(200):    
@@ -153,18 +168,31 @@ def train(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             train_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
             train_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
             bpp = train_bpp_main + train_bpp_hyper
-            loss = dloss + lamb * bpp
+            # loss = dloss + lamb * bpp
+            ## about lambda: https://interdigitalinc.github.io/CompressAI/zoo.html
+            loss = 0.0067 * 255*255 * dloss + bpp
+
+            
             print('step:', step, 'LPIPS:', lpips_loss.item(), "mse:", l2_loss.item(), 'loss:', loss.item(), 'bpp:', bpp.item())
             optimizer.zero_grad()
+            aux_optimizer.zero_grad()
+
             loss.backward()
             optimizer.step()
+
+            aux_loss = image_comp.net.entropy_bottleneck.loss()
+            aux_loss.backward()
+            aux_optimizer.step()
+
             bpp_epoch += bpp.item()
             loss_epoch += loss.item()
             if step % 1000 == 0:
-                torch.save(image_comp.module.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.8f_%0.8f.pkl' % (epoch, step, loss_epoch/(step+1), bpp_epoch/(step+1))))
+                # torch.save(image_comp.module.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.8f_%0.8f.pkl' % (epoch, step, loss_epoch/(step+1), bpp_epoch/(step+1))))
+                torch.save(image_comp.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.8f_%0.8f.pkl' % (epoch, step, loss_epoch/(step+1), bpp_epoch/(step+1))))
         
         lr_scheduler.step()
-        torch.save(image_comp.module.state_dict(), os.path.join(ckpt_dir,'ae_%d_%0.8f_%0.8f.pkl' % (epoch, loss_epoch/(step+1), bpp_epoch/(step+1))))
+        # torch.save(image_comp.module.state_dict(), os.path.join(ckpt_dir,'ae_%d_%0.8f_%0.8f.pkl' % (epoch, loss_epoch/(step+1), bpp_epoch/(step+1))))
+        torch.save(image_comp.state_dict(), os.path.join(ckpt_dir,'ae_%d_%0.8f_%0.8f.pkl' % (epoch, loss_epoch/(step+1), bpp_epoch/(step+1))))
 
 if __name__ == "__main__":
     args = coder.config()
