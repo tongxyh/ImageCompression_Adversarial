@@ -15,6 +15,8 @@ from utils import torch_msssim, ops
 from anchors import balle
 from datetime import datetime
 
+import classifier
+
 class Gradient_Net(nn.Module):
   def __init__(self):
     super(Gradient_Net, self).__init__()
@@ -97,7 +99,12 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             image_comp.to(dev_id).train()
     # Gradient Mask
     gnet = Gradient_Net().to(dev_id)
-    #msssim_func = msssim_func.cuda()
+
+    mnist_classifier = classifier.Classifier()
+    mnist_classifier.load_state_dict(torch.load("xxx"))
+    mnist_classifier = mnist_classifier.cuda()
+    
+    y = one_hot([5], num_classes=10)
 
     # img_s = Image.open(source_dir).resize((16,16))
     img_s = Image.open(args.source)
@@ -158,6 +165,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         mask_tar = 1. - mask_bkg
 
     mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
+    loss_func = nn.CrossEntropyLoss()
     with torch.no_grad():
         # mask = gnet(im_s)
         mask = torch.ones_like(im_s)
@@ -212,34 +220,13 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             x_ = image_comp.net.g_s(y_main)
             output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
 
-            if LOSS_FUNC == "L2" and args.mask_loc == None:
-                # print("[Loss] L2 with no mask")
-                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
-                if args.target == None:
-                    # loss_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(y_s, y_)
-                    loss_o = 1. - torch.mean((im_s - output_) * (im_s - output_)) # MSE(x_, y_)
-                else:
-                    loss_o = torch.mean((output_t - output_) * (output_t - output_)) # MSE(y_t, y_s)
-                    # loss_o = torch.mean((im_t - output_) * (im_t - output_)) # MSE(y_t, y_s)
-
-            # L1 loss
-            if LOSS_FUNC == "L1":
-                loss_i = torch.mean(torch.abs(im_s - im_in))
-                if args.target == None:
-                    loss_o = 1.0 - torch.mean(torch.abs(im_s - output_))
-                else:    
-                    loss_o = torch.mean(torch.abs(output_t - output_))
             
-            if LOSS_FUNC == "L2" and args.mask_loc != None:
-                # print("[Loss] L2 with target mask")
-                l1_loss = torch.mean(torch.abs(im_s - im_in) * mask_tar)
-                l2_loss = torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar)
-                loss_tar = 0.01*l1_loss + l2_loss
-                loss_i = lamb_tar * loss_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
-                # loss_i = lamb_tar * torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
-                # loss_i = lamb_tar * torch.mean(torch.abs(im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
-                # loss_o = torch.mean((output_t - output_) * (output_t - output_) * mask_tar)
-                loss_o = torch.mean(torch.abs(output_t - output_) * mask_tar)
+            loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
+            
+            # image classification loss
+            # load classifier
+            # load label
+            loss_o = loss_func(mnist_classifier(output_), y)
 
             loss = loss_i + lamb * loss_o
             with torch.no_grad():
