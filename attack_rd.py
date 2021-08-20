@@ -242,8 +242,13 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                 # loss_i = lamb_tar * torch.mean(torch.abs(im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
                 # loss_o = torch.mean((output_t - output_) * (output_t - output_) * mask_tar)
                 loss_o = torch.mean(torch.abs(output_t - output_) * mask_tar)
+            
+            # loss = loss_i + lamb * loss_o
+            if loss_i >= 0.001:
+                loss = loss_i
+            else:
+                loss = loss_o
 
-            loss = loss_i + lamb * loss_o
             with torch.no_grad():
                 att = torch.tanh((output_s - output_) * (output_s - output_) / (noise_clipped*noise_clipped+0.0001))
                 # print(torch.mean(mask))
