@@ -7,7 +7,7 @@ export TORCH_HOME=/workspace/ct/code/LearnedCompression/ckpts/balle
 
 # Balle
 python attack_rd.py -m hyper -metric ms-ssim -q 1 -la 0.2 -step 10001 \
--s /workspace/ct/datasets/kodak/kodim01.png --d
+-s /workspace/ct/datasets/kodak/kodim01.png --pretrained
 
 # NLAIC
 python attack_rd.py -m nonlocal -cn 1000000 -l 16 -j MSSSIM_rctx --ctx -la 0.2 -step 10001 \
