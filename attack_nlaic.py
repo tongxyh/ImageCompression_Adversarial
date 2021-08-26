@@ -217,12 +217,13 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                 loss_i = torch.mean((im_s - im_in) * (im_s - im_in)) * mask_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in)) * mask_bkg
                 loss_o = torch.mean((output_t - output_) * (output_t - output_)) * mask_tar
 
-            loss = loss_i + lamb * loss_o
-            with torch.no_grad():
-                att = torch.tanh((output_s - output_) * (output_s - output_) / (noise_clipped*noise_clipped+0.0001))
-                # print(torch.mean(mask))
-                mask = 0.9999*mask + 0.0001*att
-                # noise_range = 0.9999*noise_range + 0.0001*50/255
+            # loss = loss_i + lamb * loss_o
+            if loss_i >= 0.001: # PSNR=30dB
+                loss = loss_i
+            else:
+                loss = loss_o
+            
+            # noise_range = 0.9999*noise_range + 0.0001*50/255
             # bpp attack
             # train_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
             # train_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
@@ -323,7 +324,7 @@ if __name__ == "__main__":
 
     parser.add_argument('-itx',    dest='iter_x', type=int, default=0,          help="iter step updating x")
     parser.add_argument('-ity',    dest='iter_y', type=int, default=0,          help="iter step updating y")
-    parser.add_argument('-m',      dest='model',  type=str, default="nonlocal", help="compress model in 'factor','hyper','context','nonlocal'")
+    parser.add_argument('-m',      dest='model',  type=str, default="nlaic", help="compress model in 'factor','hyper','context','nonlocal'")
     parser.add_argument('-metric', dest='metric', type=str, default="ms-ssim",  help="mse or ms-ssim")
     parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
     
@@ -340,7 +341,7 @@ if __name__ == "__main__":
     print("[ IMAGE ]:", args.source, "->", args.target)
 
     checkpoint = "Weights/"
-    print("[CONTEXT]:", args.context)
+    # print("[CONTEXT]:", args.context)
     print("==== Loading Checkpoint:", checkpoint, '====')
     
     ## random select in 0

@@ -120,10 +120,16 @@ def attack_trained_model(args,
     update_mask = tf.assign(mask, tf.math.tanh(tf.square(output_image-input_image) / (tf.square(noise)+0.0001)))
     loss_i = tf.math.reduce_mean(tf.square(noise))
     loss_o = tf.math.reduce_mean(tf.square(output_image-input_image))
-    cost = loss_i + lamb * (255*255-loss_o)
-    print("[TODO] !!! gradient mask")
     
-    print("[TODO] !!! clip with gradient")
+    # cost = loss_i + lamb * (255*255-loss_o)
+    @tf.function
+    def loss_func(loss_a, loss_b):
+      if loss_a > 0.001 * 255.*255.:
+        return loss_a
+      else:
+        return 255*255. - loss_b
+    cost = loss_func(loss_i, loss_o)
+
     print("[ATTACK] learning rate decay x0.9 every 1000 steps")
     global_step = tf.Variable(0, trainable=False)
     initial_learning_rate = 1.0

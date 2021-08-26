@@ -4,16 +4,18 @@ export TORCH_HOME=/workspace/ct/code/LearnedCompression/ckpts/balle
 
 ## Distorion Attack
 ```
-
-# Balle
-python attack_rd.py -m hyper -metric ms-ssim -q 1 -la 0.2 -step 10001 \
--s /workspace/ct/datasets/kodak/kodim01.png --pretrained
+# Balle2016, Balle2018, Minnen, Cheng2020
+python attack_rd.py -m hyper -metric ms-ssim -q 1 -la 0.2 -step 10001 -s /workspace/ct/datasets/kodak/kodim01.png --pretrained
 
 # NLAIC
-python attack_rd.py -m nonlocal -cn 1000000 -l 16 -j MSSSIM_rctx --ctx -la 0.2 -step 10001 \
+python attack_nlaic.py -q 8 -step 10001 -s /workspace/ct/datasets/kodak/kodim20.png
+
+# python attack_rd.py -m nonlocal -cn 1000000 -l 16 -j MSSSIM_rctx --ctx -la 0.2 -step 10001 \
 -s /ct/code/mnist_png/testing/9/281.png --d
 
-python attack_nlaic.py  -la 0.5 -step 10001 -s /ct/code/mnist_png/testing/9/281.png
+# HiFiC
+# yun.nju.edu.cn:5000/chentong/tensorflow:1.15.2-cuda10.0-cudnn7-py36-runtime
+TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config mselpips --ckpt_dir ckpts/mse_lpips --tfds_dataset_name coco2014 --out_dir ./out
 ```
 
 ## Targeted Attack
