@@ -16,6 +16,17 @@ python attack_nlaic.py -q 8 -step 10001 -s /workspace/ct/datasets/kodak/kodim20.
 # HiFiC
 # yun.nju.edu.cn:5000/chentong/tensorflow:1.15.2-cuda10.0-cudnn7-py36-runtime
 TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config mselpips --ckpt_dir ckpts/mse_lpips --tfds_dataset_name coco2014 --out_dir ./out
+
+step: 1,        Loss_all: 650.2389, Loss_in: 628.6296, Loss_out: 301.0564, lr=1.0000
+step: 1001,     Loss_all: 66.1511, Loss_in: 66.1352, Loss_out: 844.2419, lr=0.9830
+step: 2001,     Loss_all: 69.0035, Loss_in: 68.9880, Loss_out: 934.7073, lr=0.9664
+step: 3001,     Loss_all: 67.7763, Loss_in: 67.7602, Loss_out: 904.1549, lr=0.9500
+step: 4001,     Loss_all: 67.9129, Loss_in: 67.8978, Loss_out: 943.9104, lr=0.9339
+
+
+# InvCompress
+# Note: replace original InvCompress/codes/compressai directory with compiled /workspace/InvCompress/codes/compressai
+python -m compressai.utils.attack_inv checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda
 ```
 
 ## Targeted Attack
@@ -70,6 +81,9 @@ python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/k
 #https://storage.googleapis.com/tensorflow_compression/metagraphs/models.txt
 python3 -m hific.evaluate_attacker --config hific --ckpt_dir ckpts/hific --out_dir out/ \
                    --tfds_dataset_name coco2014 --images_filename 
+
+#InvCompress
+python -m compressai.utils.eval_model checkpoint ./attack/fake_in.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01
 ```
 
 ## Visual Distribution

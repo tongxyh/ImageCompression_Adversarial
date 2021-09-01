@@ -180,7 +180,7 @@ def attack(args, model, filepath):
     optimizer = torch.optim.Adam([noise],lr=0.001)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)
     
-    steps = 10001
+    steps = 100001
     for i in range(steps):  
         im_in = torch.clamp(x+noise, min=0., max=1.0)
         y = model.g_a_func(im_in)
@@ -240,7 +240,7 @@ def attack(args, model, filepath):
                 img = Image.fromarray(fin)
                 img.save("./attack/fake%d_in_%0.8f.png"%(i, loss.item())) 
 
-                # rv = inference(model.float().cpu(), x[0].float().cpu()+noise[0].float().cpu(), savedir=args.savedir)
+                rv = inference(model.float().cpu(), x[0].float().cpu()+noise[0].float().cpu(), savedir=args.savedir)
                 bpp = rv['bpp']
                 print("bpp:", rv['bpp'])
                 print('psnr', rv['psnr'])
@@ -399,8 +399,8 @@ def main(argv):
         # metrics = eval_model(model, filepaths, args.entropy_estimation, args.half, args.savedir)
         attack(args, model, args.dataset)
 
-        for k, v in metrics.items():
-            results[k].append(v)
+        # for k, v in metrics.items():
+        #     results[k].append(v)
 
     if args.verbose:
         sys.stderr.write("\n")
