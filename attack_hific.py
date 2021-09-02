@@ -106,10 +106,10 @@ def attack_trained_model(args,
   noise_ = np.random.randn(shape[0],shape[1],shape[2],shape[3]).astype(np.float32)*(255.0/10.0)
   with tf.name_scope("attacker") as scope:
     noise = tf.Variable(noise_, name="noise")
-    mask = tf.Variable(tf.ones_like(noise), name="mask")
-    noise_clipped = tf.clip_by_value(noise*mask, -50, 50.)
+    # mask = tf.Variable(tf.ones_like(noise), name="mask")
+    # noise_clipped = tf.clip_by_value(noise*mask, -50, 50.)
   print("[ATTACK] CLIP input to 0-255")
-  input_attack = tf.clip_by_value(tf.math.add(input_image,noise_clipped), 0, 255.)
+  input_attack = tf.clip_by_value(tf.math.add(input_image,noise), 0, 255.)
   output_image, bitstring = hific.build_model(input_attack)
   mse_in = tf.math.reduce_mean(tf.square(input_attack - input_image))
 
@@ -117,7 +117,7 @@ def attack_trained_model(args,
 
   # output_image, bitstring = hific.build_model(input_image)
   with tf.name_scope("attacker_opt") as scope:
-    update_mask = tf.assign(mask, tf.math.tanh(tf.square(output_image-input_image) / (tf.square(noise)+0.0001)))
+    # update_mask = tf.assign(mask, tf.math.tanh(tf.square(output_image-input_image) / (tf.square(noise)+0.0001)))
     loss_i = tf.math.reduce_mean(tf.square(noise))
     loss_o = tf.math.reduce_mean(tf.square(output_image-input_image))
     
@@ -130,12 +130,12 @@ def attack_trained_model(args,
         return 255*255. - loss_b
     cost = loss_func(loss_i, loss_o)
 
-    print("[ATTACK] learning rate decay x0.9 every 1000 steps")
+    print("[ATTACK] learning rate decay x0.33 every 33333 steps")
     global_step = tf.Variable(0, trainable=False)
-    initial_learning_rate = 1.0
+    initial_learning_rate = args.lr_attack
     learning_rate = tf.train.exponential_decay(initial_learning_rate,
                                              global_step=global_step,
-                                             decay_steps=3000,decay_rate=0.95)
+                                             decay_steps=33333,decay_rate=0.33)
     # TODO: optimize only noise
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost, var_list=[noise], global_step=global_step)
   
@@ -163,10 +163,10 @@ def attack_trained_model(args,
       if max_images and i == max_images:
         break
       try:
-        opt_v, inp_np, otp_np, mse_in_np, ls_in, ls_out, loss, bitstring_np, _, step_v = \
-          sess.run([optimizer, input_image, output_image, mse_in, loss_i, loss_o, cost, bitstring, update_mask, global_step])
-        
-        print(f"step: {step_v},\tLoss_all: {loss:.4f}, Loss_in: {mse_in_np:.4f}, Loss_out: {ls_out:.4f}")
+        opt_v, inp_np, otp_np, mse_in_np, ls_in, ls_out, loss, bitstring_np, step_v, lr = \
+          sess.run([optimizer, input_image, output_image, mse_in, loss_i, loss_o, cost, bitstring, global_step, learning_rate])
+        if i % 1000 == 0:
+          print(f"step: {step_v},\tLoss_all: {loss:.4f}, Loss_in: {mse_in_np:.4f}, Loss_out: {ls_out:.4f}, lr={lr:.4f}")
         
         # print(noise_v.min(), noise_v.max())  
         
@@ -186,15 +186,15 @@ def attack_trained_model(args,
         #   accumulated_metrics[metric].append(value)
 
         # # Save images.
-        if i % 1000 == 0:
+        if i % 10000 == 0:
           name = 'test'
           Image.fromarray(inp_np).save(
               os.path.join(out_dir, f'{name}_input_{i}_{ls_in:.4f}_{ls_out:.4f}.png'))
           Image.fromarray(otp_np).save(
               os.path.join(out_dir, f'{name}_outpt_{i}_{bpp:.3f}_{ls_in:.4f}_{ls_out:.4f}.png'))
-          if mse_in_np > 0.03*255.*255. or ls_out > 0.04*255*255:
-            print(f"[Done!] PSNR_in: {-10*np.log10(mse_in_np/255./255.)} PSNR_out: {-10*np.log10(ls_out/255./255.)}")
-            break
+          # if mse_in_np > 0.03*255.*255. or ls_out > 0.04*255*255:
+          #   print(f"[Done!] PSNR_in: {-10*np.log10(mse_in_np/255./255.)} PSNR_out: {-10*np.log10(ls_out/255./255.)}")
+          #   break
       except tf.errors.OutOfRangeError:
         print('No more inputs.')
         break
@@ -240,6 +240,7 @@ def parse_args(argv):
 
   parser.add_argument('--images_glob', help='If given, use TODO')
   parser.add_argument("-la", dest="lamb_attack", type=float, default=0.2, help="attack lambda")
+  parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
   helpers.add_tfds_arguments(parser)
 
   args = parser.parse_args(argv[1:])
