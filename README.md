@@ -5,13 +5,13 @@ export TORCH_HOME=/workspace/ct/code/LearnedCompression/ckpts/balle
 ## Distorion Attack
 ```
 # Balle2016, Balle2018, Minnen, Cheng2020
-python attack_rd.py -m hyper -metric ms-ssim -q 1 -la 0.2 -step 10001 -s /workspace/ct/datasets/kodak/kodim01.png --pretrained
+python attack_rd.py -m hyper -metric ms-ssim -q 1 -la 0.2 -step 10001 -s /workspace/ct/datasets/kodak/kodim01.png --download
 
 # NLAIC
 python attack_nlaic.py -q 8 -step 10001 -s /workspace/ct/datasets/kodak/kodim20.png
 
 # python attack_rd.py -m nonlocal -cn 1000000 -l 16 -j MSSSIM_rctx --ctx -la 0.2 -step 10001 \
--s /ct/code/mnist_png/testing/9/281.png --d
+-s /ct/code/mnist_png/testing/9/281.png --download
 
 # HiFiC
 # yun.nju.edu.cn:5000/chentong/tensorflow:1.15.2-cuda10.0-cudnn7-py36-runtime
@@ -45,20 +45,20 @@ python -m compressai.utils.attack_inv checkpoint /workspace/ct/datasets/kodak/ko
 # source = "/ct/code/mnist_png/testing/1/430.png" lambda = 1.0
 
 # MNIST
-python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -step 10001 --d \
+python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -step 10001 --download \
 -s /ct/code/mnist_png/testing/9/281.png \
 -t /ct/code/mnist_png/testing/0/294.png
 
 # Cityscapes
-python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -step 10001 --d --mask 112 199 103 137 \
+python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -step 10001 --download --mask 112 199 103 137 \
 -s ./attack/licenseplate/MZ2837_origin.png \
 -t ./attack/licenseplate/MZ8723_origin.png
 
-python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -step 10001 --d --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ8723_origin.png -lr 1e-4
-python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -step 10001 --d --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ8723_120x120.png -lr 1e-4
+python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -step 10001 --download --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ8723_origin.png -lr 1e-4
+python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -step 10001 --download --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ8723_120x120.png -lr 1e-4
 
-python attack_rd.py -m factorized -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.175 -step 10001 --d --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ2222_origin.png -lr 1e-3
-python attack_rd.py -m hyper -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.22 -step 10001 --d --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ2222_120x120.png -lr 1e-3
+python attack_rd.py -m factorized -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.175 -step 10001 --download --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ2222_origin.png -lr 1e-3
+python attack_rd.py -m hyper -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.22 -step 10001 --download --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ2222_120x120.png -lr 1e-3
 ```
 
 
@@ -69,13 +69,13 @@ python attack_data.py -la 0.2 -step 1001 -m hyper -q 3
 python train.py -m hyper -la 0.1 -q 3 -lr 1e-5 -ckpt ./ckpts/attack/anchor/xxx --pretrained
 python train.py -m hyper -la 0.1 -q 3 -metric mse -lr 1e-4 -ckpt ./ckpts/attack/anchor/xxx
 
-python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --d
+python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --download
 python visual.py -m hyper -metric ms-ssim -q 3 -s ./attack/kodak/fake3333_ -ckpt ./ckpts/attack/anchor/hyper-3-fromscratch//ae_100_0_0.02102314_0.14399883.pkl
 ```
 
 ## test
 ```
-python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --d
+python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --download
 
 #HiFiC
 #https://storage.googleapis.com/tensorflow_compression/metagraphs/models.txt
@@ -89,8 +89,8 @@ python -m compressai.utils.eval_model checkpoint ./attack/fake_in.png -a invcomp
 ## Visual Distribution
 ```
 /workspace/ct/datasets/datasets/div2k/
-python visual_distribution.py -m hyper -metric ms-ssim -q 2 -s "/workspace/ct/datasets/attack/hyper-2/adversarial/*.png" --d
-python visual_distribution.py -m hyper -metric ms-ssim -q 2 -s "/workspace/ct/datasets/datasets/div2k/*.png" --d
+python visual_distribution.py -m hyper -metric ms-ssim -q 2 -s "/workspace/ct/datasets/attack/hyper-2/adversarial/*.png" --download
+python visual_distribution.py -m hyper -metric ms-ssim -q 2 -s "/workspace/ct/datasets/datasets/div2k/*.png" --download
 ```
 ## JPEG sr6 anchor
 ```

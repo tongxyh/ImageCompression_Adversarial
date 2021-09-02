@@ -111,7 +111,7 @@ def config():
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
     parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")
     parser.add_argument("-ckpt",dest="ckpt",        type=str,   default=None,   help="local checkpoint dir")
-    parser.add_argument('--d',  dest='download',    action='store_true')
+    parser.add_argument('--download',  dest='download',    action='store_true')
     parser.add_argument('--mask_loc', nargs='+', type=int, default=None)
     parser.add_argument("-la_bkg",  dest="lamb_bkg",type=float, default=1.0,    help="attack lambda of background area")
     parser.add_argument("-la_tar",  dest="lamb_tar",type=float, default=1.0,    help="attack lambda of target area")    

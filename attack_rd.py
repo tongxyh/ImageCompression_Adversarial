@@ -91,12 +91,14 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     #         os.path.join(checkpoint_dir, models[model_index] + r'.pkl'), map_location='cpu'))
 
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.pretrained).to(dev_id)
+        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=True).to(dev_id)
         print("[ ARCH  ]:", MODEL, quality, args.metric)
-        if args.pretrained == False:
-            # load from local ckpts
+        if args.download == False:
+            print("[ CKPTS ]:", checkpoint_dir)
             image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
             image_comp.to(dev_id).train()
+        else:
+            print("[ CKPTS ]: Download from CompressAI Model Zoo", )
     # Gradient Mask
     gnet = Gradient_Net().to(dev_id)
     #msssim_func = msssim_func.cuda()
