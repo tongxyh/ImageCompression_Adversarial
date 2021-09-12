@@ -19,13 +19,6 @@ python attack_nlaic.py -q 8 -step 10001 -s /workspace/ct/datasets/kodak/kodim20.
 # yun.nju.edu.cn:5000/chentong/tensorflow:1.15.2-cuda10.0-cudnn7-py36-runtime
 TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config mselpips --ckpt_dir ckpts/mse_lpips --tfds_dataset_name coco2014 --out_dir ./out
 
-step: 1,        Loss_all: 650.2389, Loss_in: 628.6296, Loss_out: 301.0564, lr=1.0000
-step: 1001,     Loss_all: 66.1511, Loss_in: 66.1352, Loss_out: 844.2419, lr=0.9830
-step: 2001,     Loss_all: 69.0035, Loss_in: 68.9880, Loss_out: 934.7073, lr=0.9664
-step: 3001,     Loss_all: 67.7763, Loss_in: 67.7602, Loss_out: 904.1549, lr=0.9500
-step: 4001,     Loss_all: 67.9129, Loss_in: 67.8978, Loss_out: 943.9104, lr=0.9339
-
-
 # InvCompress
 # Note: replace original InvCompress/codes/compressai directory with compiled /workspace/InvCompress/codes/compressai
 python -m compressai.utils.attack_inv checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda
@@ -68,7 +61,7 @@ python attack_rd.py -m hyper -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.22 -step 10
 ```
 python attack_data.py -la 0.2 -step 1001 -m hyper -q 3
 
-python train.py -m hyper -la 0.1 -q 3 -lr 1e-5 -ckpt ./ckpts/attack/anchor/xxx --pretrained
+python train.py -m hyper -la 0.1 -q 3 -lr 1e-5 --pretrained
 python train.py -m hyper -la 0.1 -q 3 -metric mse -lr 1e-4 -ckpt ./ckpts/attack/anchor/xxx
 
 python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --download
@@ -77,7 +70,7 @@ python visual.py -m hyper -metric ms-ssim -q 3 -s ./attack/kodak/fake3333_ -ckpt
 
 ## test
 ```
-python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --download
+python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png -t ./attack/kodak/out.png --download
 
 #HiFiC
 #https://storage.googleapis.com/tensorflow_compression/metagraphs/models.txt
