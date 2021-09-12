@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+from datetime import datetime
 from glob import glob
 
 import torch
@@ -11,16 +12,15 @@ from PIL import Image
 from thop import profile
 
 import model
-from utils import torch_msssim, ops
-from anchors import balle
-from datetime import datetime
-
 import coder
+from anchors import balle
+from utils import torch_msssim, ops
 
-def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
+def test(args, model, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
+    image_comp = model
+    dev_id = args.gpu
     TRAINING = False
-    dev_id = "cuda:0"
     # read image
     precise = 16
     C = 3
@@ -31,27 +31,6 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     # print('====> Encoding Image:', im_dir)
 
     ## model initalization
-    MODEL = args.model
-    quality = args.quality
-    download_model_zoo = args.download
-    arch_lists = ["factorized", "hyper", "context", "cheng2020", "nlaic", "elic"]
-    assert MODEL in arch_lists, f"'{MODEL}' not in {arch_lists} for param '-m'"
-    if MODEL == "elic":
-        image_comp = model.ImageCompression(256)
-        image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
-        # image_comp.load_state_dict(torch.load(checkpoint_dir).state_dict())
-        # torch.save(image_comp.state_dict(), "./checkpoints/elic-0.0.1/ae.pkl")
-        image_comp.to(dev_id).eval()
-        # print("[ ARCH  ]:", MODEL) 
-
-    if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.pretrained).to(dev_id)
-        # print("[ ARCH  ]:", MODEL, quality, args.metric)
-        if args.pretrained == False:
-            # load from local ckpts
-            print("Load from local:", checkpoint_dir)
-            image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
-            image_comp.to(dev_id).eval()
     mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
 
     img = Image.open(args.source)
@@ -133,9 +112,11 @@ if __name__ == "__main__":
         print("[CONTEXT]:", args.context)
         print("==== Loading Checkpoint:", checkpoint, '====')
     
+    model = coder.load_model(args)
+    
     images = glob(args.source)
     print(images)
     for image in images:
         args.source = image
-        bpp, psnr, quality = test(args, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
+        bpp, psnr, quality = test(args, model, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
         print("bpp:", bpp.item(), "PSNR:", psnr, "MS-SSIM:", quality.item())

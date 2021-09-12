@@ -16,20 +16,8 @@ from anchors import balle
 from datetime import datetime
 
 
-def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
-
-    TRAINING = False
-    dev_id = "cuda:0"
-    # read image
-    precise = 16
-    C = 3
-    if crop == None:
-        tile = 64.
-    else:
-        tile = crop * 1.0
-    # print('====> Encoding Image:', im_dir)
-
-    ## model initalization
+def load_model(args):
+    dev_id = args.gpu()
     MODEL = args.model
     quality = args.quality
     download_model_zoo = args.download
@@ -45,11 +33,26 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
         image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=True).to(dev_id)
-        # print("[ ARCH  ]:", MODEL, quality, args.metric)
-        if download_model_zoo == False:
-            # load from local ckpts
-            image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
+        print("[ ARCH  ]:", MODEL, quality, args.metric)
+        if args.download == False: # load from local ckpts
+            print("Load from local:", args.ckpt)
+            image_comp.load_state_dict(torch.load(args.ckpt), strict=False)
             image_comp.to(dev_id).eval()
+    
+    return image_comp
+
+def test(args, model, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
+    image_comp = model
+    TRAINING = False
+    dev_id = args.gpu
+    # read image
+    precise = 16
+    C = 3
+    if crop == None:
+        tile = 64.
+    else:
+        tile = crop * 1.0
+    # print('====> Encoding Image:', im_dir)
     mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
 
     img = Image.open(args.source)
@@ -88,6 +91,7 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
 def config():
     parser = argparse.ArgumentParser()
+    parser.add_argument("-gpu", "gpu", type=int, default=0, help="gpu index")
     # NIC config
     parser.add_argument("-cn", "--ckpt_num", type=int,
                         help="load checkpoint by step number")
