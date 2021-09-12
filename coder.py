@@ -105,7 +105,7 @@ def config():
     parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
     
     # attack config
-    parser.add_argument('-step',dest='steps',       type=int,   default=10001,  help="attack iteration steps")
+    parser.add_argument('-steps',dest='steps',      type=int,   default=10001,  help="attack iteration steps")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
     parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
