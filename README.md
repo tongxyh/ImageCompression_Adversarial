@@ -1,5 +1,5 @@
 # Robust Learned Image Compression
-model_dir 的默认值为 $TORCH_HOME/models 其中 $TORCH_HOME 默认值为 ~/.torch. 可以使用 $TORCH_MODEL_ZOO 环境变量来覆盖默认目录
+The default 'model_dir' is '$TORCH_HOME/models', when '$TORCH_HOME' is set to '~/.torch' in default. You may use '$TORCH_MODEL_ZOO' environment variable to overwrite the default directory.
 ```
 export TORCH_HOME=/workspace/ct/code/LearnedCompression/ckpts/balle
 ```
@@ -20,7 +20,7 @@ python attack_nlaic.py -q 8 -step 10001 -s /workspace/ct/datasets/kodak/kodim20.
 TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config mselpips --ckpt_dir ckpts/mse_lpips --tfds_dataset_name coco2014 --out_dir ./out
 
 # InvCompress
-# Note: replace original InvCompress/codes/compressai directory with compiled /workspace/InvCompress/codes/compressai
+# Note: replace original InvCompress/codes/compressai directory with compiled files in /workspace/InvCompress/codes/compressai
 python -m compressai.utils.attack_inv checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda
 ```
 
@@ -68,7 +68,7 @@ python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/k
 python visual.py -m hyper -metric ms-ssim -q 3 -s ./attack/kodak/fake3333_ -ckpt ./ckpts/attack/anchor/hyper-3-fromscratch//ae_100_0_0.02102314_0.14399883.pkl
 ```
 
-## test
+## Test
 ```
 python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png -t ./attack/kodak/out.png --download
 

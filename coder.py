@@ -17,7 +17,7 @@ from datetime import datetime
 
 
 def load_model(args):
-    dev_id = args.gpu()
+    dev_id = args.gpu
     MODEL = args.model
     quality = args.quality
     download_model_zoo = args.download
@@ -41,12 +41,10 @@ def load_model(args):
     
     return image_comp
 
-def test(args, model, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
+def code(args, model, input_file, out_file, crop=None):
     image_comp = model
     TRAINING = False
     dev_id = args.gpu
-    # read image
-    precise = 16
     C = 3
     if crop == None:
         tile = 64.
@@ -54,8 +52,9 @@ def test(args, model, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None)
         tile = crop * 1.0
     # print('====> Encoding Image:', im_dir)
     mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
-
-    img = Image.open(args.source)
+    
+    # read image
+    img = Image.open(input_file)
     img = np.array(img)/255.0
 
     if len(img.shape) < 3:
@@ -77,11 +76,19 @@ def test(args, model, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None)
 
     with torch.no_grad():
         # original_image
-        output, y_main_, y_hyper, p_main, p_hyper = image_comp(im, False, CONTEXT, POSTPROCESS)
+        output, y_main_, y_hyper, p_main, p_hyper = image_comp(im, False, args.context, args.post)
 
         bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
         bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
         output = torch.clamp(output, min=0., max=1.0)
+
+        ## TODO: save image
+        out = output.data[0].cpu().numpy()
+        out = np.round(out * 255.0)
+        out = out.astype('uint8')
+        out = out.transpose(1, 2, 0)
+        img = Image.fromarray(out[:H, :W, :])
+        img.save(out_file)
 
         # PSNR
         mse = torch.mean((im - output)**2)
@@ -91,20 +98,18 @@ def test(args, model, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None)
 
 def config():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-gpu", "gpu", type=int, default=0, help="gpu index")
+    parser.add_argument("-gpu", type=int, default=0, help="gpu index")
     # NIC config
-    parser.add_argument("-cn", "--ckpt_num", type=int,
-                        help="load checkpoint by step number")
-    parser.add_argument("-l", "--lamb", type=float,
-                        default=6400., help="lambda")
-    parser.add_argument("-j", "--job", type=str, default="", help="job name")
-    parser.add_argument('--ctx', dest='context', action='store_true')
+    parser.add_argument("-cn", "--ckpt_num", type=int, help="load checkpoint by step number")
+    parser.add_argument("-l",  "--lamb",     type=float, default=6400., help="lambda")
+    parser.add_argument("-j",  "--job",      type=str,   default="", help="job name")
+    parser.add_argument('--ctx',    dest='context', action='store_true')
     parser.add_argument('--no-ctx', dest='context', action='store_false')
     parser.add_argument('--post', dest='post', action='store_true')
 
     parser.add_argument('-itx',    dest='iter_x', type=int, default=0,          help="iter step updating x")
     parser.add_argument('-ity',    dest='iter_y', type=int, default=0,          help="iter step updating y")
-    parser.add_argument('-m',      dest='model',  type=str, default="nonlocal", help="compress model in 'factor','hyper','context','nonlocal'")
+    parser.add_argument('-m',      dest='model',  type=str, default="nonlocal", help="compress model in 'factor','hyper','context','cheng2020','nonlocal'")
     parser.add_argument('-metric', dest='metric', type=str, default="ms-ssim",  help="mse or ms-ssim")
     parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
     
