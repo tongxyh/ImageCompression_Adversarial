@@ -32,7 +32,7 @@ def load_model(args):
         # print("[ ARCH  ]:", MODEL) 
 
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=True).to(dev_id)
+        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.download).to(dev_id)
         print("[ ARCH  ]:", MODEL, quality, args.metric)
         if args.download == False: # load from local ckpts
             print("Load from local:", args.ckpt)

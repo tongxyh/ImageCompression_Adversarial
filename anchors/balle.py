@@ -53,6 +53,15 @@ class Image_coder(torch.nn.Module):
         x_hat = self.net.g_s(y_hat)        
         return x_hat, y, z_hat, y_likelihoods, z_likelihoods
 
+    def load_state_dict(self, state_dict):
+        # Dynamically update the entropy bottleneck buffers related to the CDFs
+        update_registered_buffers(
+            self.entropy_bottleneck,
+            "entropy_bottleneck",
+            ["_quantized_cdf", "_offset", "_cdf_length"],
+            state_dict,
+        )
+        super().load_state_dict(state_dict)
 # TEST
 # MODEL = sys.argv[2] #factorized, hyper, context
 # quality = int(sys.argv[3])
