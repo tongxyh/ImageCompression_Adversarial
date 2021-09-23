@@ -107,11 +107,11 @@ class InvComp(nn.Module):
         if not rev:
             for op in self.operations:
                 x = op.forward(x, False)
-            b, c, h, w = x.size()
-            x = torch.mean(x.view(b, c//self.out_nc, self.out_nc, h, w), dim=1)
+            # b, c, h, w = x.size()
+            # x = torch.mean(x.view(b, c//self.out_nc, self.out_nc, h, w), dim=1)
         else:
-            times = self.in_nc // self.out_nc
-            x = x.repeat(1, times, 1, 1)
+            # times = self.in_nc // self.out_nc
+            # x = x.repeat(1, times, 1, 1)
             for op in reversed(self.operations):
                 x = op.forward(x, True)
         return x
