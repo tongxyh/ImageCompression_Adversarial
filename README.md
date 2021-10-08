@@ -1,5 +1,5 @@
-# Robust Learned Image Compression
-The default 'model_dir' is '$TORCH_HOME/models', when '$TORCH_HOME' is set to '~/.torch' in default. You may use '$TORCH_MODEL_ZOO' environment variable to overwrite the default directory.
+# Robust Neural Image Compression
+The default `model_dir` is `$TORCH_HOME/models`, when `$TORCH_HOME` is set to `~/.torch` in default. You may use `$TORCH_MODEL_ZOO` environment variable to overwrite the default directory.
 ```
 export TORCH_HOME=/workspace/ct/code/LearnedCompression/ckpts/balle
 ```
@@ -22,6 +22,9 @@ TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config mselpips -
 # InvCompress
 # Note: replace original InvCompress/codes/compressai directory with compiled files in /workspace/InvCompress/codes/compressai
 python -m compressai.utils.attack_inv checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda
+
+# TIC
+python -m attack_TIC.py checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda
 ```
 
 ## Targeted Attack
@@ -56,6 +59,14 @@ python attack_rd.py -m factorized -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.175 -s
 python attack_rd.py -m hyper -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.22 -step 10001 --download --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ2222_120x120.png -lr 1e-3
 ```
 
+## Train INN
+```
+# replace ours.py & our_utils.py in compressai and recompile & reinstall compressai by 'pip install -e .'
+# lmabda * D + R
+python examples/train.py -exp exp_01_mse_q1 -m invcompress -d /workspace/ct/datasets/datasets/ --epochs 600 -lr 1e-4 --batch-size 8 --cuda --gpu_id 0 --lambda 0.0016 --metrics mse --save 
+python -m compressai.utils.update_model -exp exp_01_mse_q1 -a invcompress
+python -m compressai.utils.eval_model checkpoint ./attack/ -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01
+```
 
 ## Data Augmentation
 ```
