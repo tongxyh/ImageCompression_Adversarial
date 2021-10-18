@@ -29,34 +29,36 @@ python -m attack_TIC.py checkpoint /workspace/ct/datasets/kodak/kodim01.png -a i
 
 ## Targeted Attack
 ```
-## random select in 0
-# target = "/ct/code/mnist_png/testing/0/294.png"
-## random select in [1-9]
-# source = "/ct/code/mnist_png/testing/9/281.png" lambda = 1.0
-# source = "/ct/code/mnist_png/testing/8/110.png" lambda = 1.0
-# source = "/ct/code/mnist_png/testing/7/411.png" lambda = 0.8
-# source = "/ct/code/mnist_png/testing/6/940.png" lambda = 1.0
-# source = "/ct/code/mnist_png/testing/5/509.png" lambda = 1.0
-# source = "/ct/code/mnist_png/testing/4/109.png" lambda = 1.0
-# source = "/ct/code/mnist_png/testing/3/1426.png"lambda = 1.0
-# source = "/ct/code/mnist_png/testing/2/72.png"  lambda = 1.0
-# source = "/ct/code/mnist_png/testing/1/430.png" lambda = 1.0
-
 # MNIST
+## target image: "/ct/code/mnist_png/testing/0/294.png"
+## source image: in [1-9]
+# "/ct/code/mnist_png/testing/9/281.png", lambda = 1.0
+# "/ct/code/mnist_png/testing/8/110.png", lambda = 1.0
+# "/ct/code/mnist_png/testing/7/411.png", lambda = 0.8
+# "/ct/code/mnist_png/testing/6/940.png", lambda = 1.0
+# "/ct/code/mnist_png/testing/5/509.png", lambda = 1.0
+# "/ct/code/mnist_png/testing/4/109.png", lambda = 1.0
+# "/ct/code/mnist_png/testing/3/1426.png",lambda = 1.0
+# "/ct/code/mnist_png/testing/2/72.png",  lambda = 1.0
+# "/ct/code/mnist_png/testing/1/430.png", lambda = 1.0
 python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -step 10001 --download \
 -s /ct/code/mnist_png/testing/9/281.png \
 -t /ct/code/mnist_png/testing/0/294.png
 
 # Cityscapes
-python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -step 10001 --download --mask 112 199 103 137 \
+python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -steps 10001 --download --mask 112 199 103 137 \
 -s ./attack/licenseplate/MZ2837_origin.png \
 -t ./attack/licenseplate/MZ8723_origin.png
 
-python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -step 10001 --download --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ8723_origin.png -lr 1e-4
-python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -step 10001 --download --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ8723_120x120.png -lr 1e-4
+python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -steps 10001 --download --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ8723_origin.png -lr 1e-4
+python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -steps 10001 --download --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ8723_120x120.png -lr 1e-4
 
-python attack_rd.py -m factorized -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.175 -step 10001 --download --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ2222_origin.png -lr 1e-3
-python attack_rd.py -m hyper -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.22 -step 10001 --download --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ2222_120x120.png -lr 1e-3
+python attack_rd.py -m factorized -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.175 -steps 10001 --download --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ2222_origin.png -lr 1e-3
+python attack_rd.py -m hyper -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.22 -steps 10001 --download --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ2222_120x120.png -lr 1e-3
+
+# CelebA
+python attack_rd.py -m factorized -q 1 -metric mse -noise 0.01 -steps 10001 --download \
+-s ./attack/face/000016.jpg -t ./attack/face/000012.jpg
 ```
 
 ## Train INN
@@ -64,7 +66,7 @@ python attack_rd.py -m hyper -la_bkg 0.25 -q 4 -metric ms-ssim -la 0.22 -step 10
 # replace ours.py & our_utils.py in compressai and recompile & reinstall compressai by 'pip install -e .'
 # lmabda * D + R
 python examples/train.py -exp exp_01_mse_q1 -m invcompress -d /workspace/ct/datasets/datasets/ --epochs 600 -lr 1e-4 --batch-size 8 --cuda --gpu_id 0 --lambda 0.0016 --metrics mse --save 
-python -m compressai.utils.update_model -exp exp_01_mse_q1 -a invcompress
+python -m compressai.utils.update_model -exp exp_01_mse_q1 -a invcompress --epoch xxx
 python -m compressai.utils.eval_model checkpoint ./attack/ -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01
 ```
 
