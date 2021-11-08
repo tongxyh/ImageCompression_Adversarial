@@ -116,6 +116,7 @@ def config():
     # attack config
     parser.add_argument('-steps',dest='steps',      type=int,   default=10001,  help="attack iteration steps")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
+    parser.add_argument("-noise",dest="noise",      type=float, default=0.001,  help="input noise threshold")
     parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
     parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")

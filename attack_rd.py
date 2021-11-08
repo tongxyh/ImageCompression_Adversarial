@@ -149,15 +149,15 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         ## TODO: background masking
         mask = torch.ones(1,C,H_PAD,W_PAD)
         # mask[:,:, PADDING:H+PADDING, PADDING:W+PADDING] = torch.zeros(1,C,H,W)
-        # x0,y0 = 83,78
-        # x1,y1 = 151,103
+        
         if args.mask_loc != None:
+            # x0,y0 = 83,78
+            # x1,y1 = 151,103
             lamb_bkg = args.lamb_bkg
             lamb_tar = args.lamb_tar
             print(args.mask_loc, "lamb_bkg:", lamb_bkg)
-        x0,x1,y0,y1 = args.mask_loc # W, H
-        
-        mask[:,:, y0:y1, x0:x1] = torch.zeros(1,C,y1-y0,x1-x0) #(y0, y1), (x0, x1)
+            x0,x1,y0,y1 = args.mask_loc # W, H
+            mask[:,:, y0:y1, x0:x1] = torch.zeros(1,C,y1-y0,x1-x0) #(y0, y1), (x0, x1)
         mask_bkg = mask.to(dev_id)
         mask_tar = 1. - mask_bkg
 
@@ -236,25 +236,26 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             
             if LOSS_FUNC == "L2" and args.mask_loc != None:
                 # print("[Loss] L2 with target mask")
-                l1_loss = torch.mean(torch.abs(im_s - im_in) * mask_tar)
+                # l1_loss = torch.mean(torch.abs(im_s - im_in) * mask_tar)
                 l2_loss = torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar)
-                loss_tar = 0.01*l1_loss + l2_loss
+                # loss_tar = 0.01*l1_loss + l2_loss
+                loss_tar = l2_loss
                 loss_i = lamb_tar * loss_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
-                # loss_i = lamb_tar * torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
                 # loss_i = lamb_tar * torch.mean(torch.abs(im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
+                
                 # loss_o = torch.mean((output_t - output_) * (output_t - output_) * mask_tar)
                 loss_o = torch.mean(torch.abs(output_t - output_) * mask_tar)
             
             # loss = loss_i + lamb * loss_o
-            if loss_i >= 0.001:
+            if loss_i >= args.noise:
                 loss = loss_i
             else:
                 loss = loss_o
 
-            with torch.no_grad():
-                att = torch.tanh((output_s - output_) * (output_s - output_) / (noise_clipped*noise_clipped+0.0001))
+            # with torch.no_grad():
+                # att = torch.tanh((output_s - output_) * (output_s - output_) / (noise_clipped*noise_clipped+0.0001))
                 # print(torch.mean(mask))
-                mask = 0.9999*mask + 0.0001*att
+                # mask = 0.9999*mask + 0.0001*att
                 # noise_range = 0.9999*noise_range + 0.0001*50/255
             # bpp attack
             # train_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)

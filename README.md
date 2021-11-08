@@ -102,7 +102,9 @@ python visual_distribution.py -m hyper -metric ms-ssim -q 2 -s "/workspace/ct/da
 ```
 ## JPEG sr6 anchor
 ```
-# DONT SUPPORT PNG format
+# DO NOT SUPPORT PNG format
 cjpeg -q 50 -outfile ./kodim08.jpg /workspace/ct/datasets/kodak/bmp/kodim08.bmp
 djpeg -v -bmp -outfile kodim08.bmp ./kodim08.jpg
 ```
+## Contact
+Feel free to contact us if there is any question. (Tong Chen, tong@smail.nju.edu.cn; Zhan Ma, mazhan@nju.edu.cn)
