@@ -184,7 +184,15 @@ def attack(args, model, filepath):
     for i in range(steps):  
         im_in = torch.clamp(x+noise, min=0., max=1.0)
         y = model.g_a_func(im_in)
-        x_hat = torch.clamp(model.g_s_func(y), min=0., max=1.)
+        
+        # noise or round
+        half = float(0.5)
+        uni_noise = torch.empty_like(y).uniform_(-half, half)
+        y_hat = y + uni_noise
+        # y_hat = y
+
+        x_hat = torch.clamp(model.g_s_func(y_hat), min=0., max=1.)
+        
         # loss
         loss_in = torch.mean(noise**2)
         loss_out = 1. - torch.mean((x_hat - x)**2)
@@ -209,7 +217,11 @@ def attack(args, model, filepath):
             img = Image.fromarray(fin)
             img.save("./attack/fake_in.png") 
 
-            im_uint8 = torch.round(x_hat * 255.0)/255.0
+            with torch.no_grad():
+                y_round = torch.round(y)
+                x_final = torch.clamp(model.g_s_func(y_round), min=0., max=1.)
+
+            im_uint8 = torch.round(x_final * 255.0)/255.0
 
             im_ =  torch.clamp(im_uint8, min=0., max=1.0)
             fin = im_.data[0].cpu().numpy()
@@ -217,7 +229,7 @@ def attack(args, model, filepath):
             fin = fin.astype('uint8')
             fin = fin.transpose(1, 2, 0)
             img = Image.fromarray(fin)
-            img.save("./attack/fake_out.png")             
+            img.save("./attack/fake_out.png")
 
         if i % (steps//3) == 0:
             # print("step:", i, "overall loss:", loss.item())

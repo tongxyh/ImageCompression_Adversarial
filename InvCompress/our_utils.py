@@ -53,16 +53,16 @@ class InvComp(nn.Module):
 
         # 1st level
         b = SqueezeLayer(2)
-        self.operations.append(b)
+        self.operations.append(b) # 0
         self.in_nc *= 4
         b = InvertibleConv1x1(self.in_nc)
-        self.operations.append(b)
+        self.operations.append(b) # 1
         b = CouplingLayer(self.in_nc // 4, 3 * self.in_nc // 4, 5)
-        self.operations.append(b)
+        self.operations.append(b) # 2
         b = CouplingLayer(self.in_nc // 4, 3 * self.in_nc // 4, 5)
-        self.operations.append(b)
+        self.operations.append(b) # 3
         b = CouplingLayer(self.in_nc // 4, 3 * self.in_nc // 4, 5)
-        self.operations.append(b)
+        self.operations.append(b) # 4
 
         # 2nd level
         b = SqueezeLayer(2)

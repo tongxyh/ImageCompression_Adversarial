@@ -92,8 +92,8 @@ class InvCompress(Cheng2020Anchor):
     @classmethod
     def from_state_dict(cls, state_dict):
         """Return a new model instance from `state_dict`."""
-        N = state_dict["h_a.0.weight"].size(0)
-        net = cls(N)
+        # N = state_dict["h_a.0.weight"].size(0)
+        net = cls(N=128)
         net.load_state_dict(state_dict)
         return net
 
@@ -155,7 +155,7 @@ class InvCompress(Cheng2020Anchor):
         y_width = z_hat.size(3) * s
 
         y_hat = torch.zeros(
-            (z_hat.size(0), self.M, y_height + 2 * padding, y_width + 2 * padding),
+            (z_hat.size(0), 768, y_height + 2 * padding, y_width + 2 * padding),
             device=z_hat.device,
         )
 
