@@ -7,12 +7,12 @@ export TORCH_HOME=/workspace/ct/code/LearnedCompression/ckpts/balle
 ## Distorion Attack
 ```
 # Balle2016, Balle2018, Minnen, Cheng2020
-python attack_rd.py -m hyper -metric ms-ssim -q 1 -la 0.2 -step 10001 -s /workspace/ct/datasets/kodak/kodim01.png --download
+python attack_rd.py -m hyper -metric ms-ssim -q 3 -steps 10001 -s /workspace/ct/datasets/kodak/kodim01.png --download -noise 0.001
 
 # NLAIC
-python attack_nlaic.py -q 8 -step 10001 -s /workspace/ct/datasets/kodak/kodim20.png
+python attack_nlaic.py -q 8 -steps 10001 -s /workspace/ct/datasets/kodak/kodim20.png
 
-# python attack_rd.py -m nonlocal -cn 1000000 -l 16 -j MSSSIM_rctx --ctx -la 0.2 -step 10001 \
+# python attack_rd.py -m nonlocal -cn 1000000 -l 16 -j MSSSIM_rctx --ctx -la 0.2 -steps 10001 \
 -s /ct/code/mnist_png/testing/9/281.png --download
 
 # HiFiC
@@ -29,19 +29,7 @@ python -m attack_TIC.py checkpoint /workspace/ct/datasets/kodak/kodim01.png -a i
 
 ## Targeted Attack
 ```
-# MNIST
-## target image: "/ct/code/mnist_png/testing/0/294.png"
-## source image: in [1-9]
-# "/ct/code/mnist_png/testing/9/281.png", lambda = 1.0
-# "/ct/code/mnist_png/testing/8/110.png", lambda = 1.0
-# "/ct/code/mnist_png/testing/7/411.png", lambda = 0.8
-# "/ct/code/mnist_png/testing/6/940.png", lambda = 1.0
-# "/ct/code/mnist_png/testing/5/509.png", lambda = 1.0
-# "/ct/code/mnist_png/testing/4/109.png", lambda = 1.0
-# "/ct/code/mnist_png/testing/3/1426.png",lambda = 1.0
-# "/ct/code/mnist_png/testing/2/72.png",  lambda = 1.0
-# "/ct/code/mnist_png/testing/1/430.png", lambda = 1.0
-python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -step 10001 --download \
+python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -steps 10001 --download \
 -s /ct/code/mnist_png/testing/9/281.png \
 -t /ct/code/mnist_png/testing/0/294.png
 
