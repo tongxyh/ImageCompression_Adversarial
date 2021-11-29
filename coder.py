@@ -36,7 +36,7 @@ def load_model(args):
         print("[ ARCH  ]:", MODEL, quality, args.metric)
         if args.download == False: # load from local ckpts
             print("Load from local:", args.ckpt)
-            image_comp.load_state_dict(torch.load(args.ckpt), strict=False)
+            image_comp.load_state_dict(torch.load(args.ckpt))
             image_comp.to(dev_id).eval()
     
     return image_comp
@@ -124,7 +124,8 @@ def config():
     parser.add_argument('--download',  dest='download',    action='store_true')
     parser.add_argument('--mask_loc', nargs='+', type=int, default=None)
     parser.add_argument("-la_bkg",  dest="lamb_bkg",type=float, default=1.0,    help="attack lambda of background area")
-    parser.add_argument("-la_tar",  dest="lamb_tar",type=float, default=1.0,    help="attack lambda of target area")    
+    parser.add_argument("-la_tar",  dest="lamb_tar",type=float, default=1.0,    help="attack lambda of target area")   
+    parser.add_argument('-att_metric', dest='att_metric', type=str, default="L2",  help="L1, L2, ms-ssim or lpips") 
 
     # train config
     parser.add_argument('--pretrained', dest='pretrained', action='store_true')
