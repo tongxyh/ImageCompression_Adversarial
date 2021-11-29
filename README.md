@@ -60,7 +60,7 @@ python -m compressai.utils.eval_model checkpoint ./attack/ -a invcompress -exp e
 
 ## Data Augmentation
 ```
-python attack_data.py -la 0.2 -step 1001 -m hyper -q 3
+python attack_data.py -steps 1001 -m hyper -q 3 -lr 0.01 -n 0.005
 
 python train.py -m hyper -la 0.1 -q 3 -lr 1e-5 --pretrained
 python train.py -m hyper -la 0.1 -q 3 -metric mse -lr 1e-4 -ckpt ./ckpts/attack/anchor/xxx

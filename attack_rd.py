@@ -12,34 +12,12 @@ from thop import profile
 
 import model
 from utils import torch_msssim, ops
+import lpips
 from anchors import balle
 from datetime import datetime
 
 import coder
 
-class Gradient_Net(nn.Module):
-  def __init__(self):
-    super(Gradient_Net, self).__init__()
-    kernel_x = [[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]
-    kernel_x = torch.FloatTensor(kernel_x).unsqueeze(0).unsqueeze(0).cuda() # [n_out, n_in, k_x, k_y]
-
-    kernel_y = [[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]]
-    kernel_y = torch.FloatTensor(kernel_y).unsqueeze(0).unsqueeze(0).cuda()
-
-    self.weight_x = nn.Parameter(data=kernel_x.repeat(1,3,1,1), requires_grad=False)
-    self.weight_y = nn.Parameter(data=kernel_y.repeat(1,3,1,1), requires_grad=False)
-
-  def forward(self, x):
-    grad_x = nn.functional.conv2d(x, self.weight_x, padding=1)
-    grad_y = nn.functional.conv2d(x, self.weight_y, padding=1)
-    gradient = torch.tanh(torch.abs(grad_x) + torch.abs(grad_y))
-    return gradient
-
-
-def add_noise(x):
-    noise = np.random.uniform(-0.5, 0.5, x.size())
-    noise = torch.Tensor(noise).cuda()
-    return x + noise
 
 def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
@@ -91,16 +69,16 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     #         os.path.join(checkpoint_dir, models[model_index] + r'.pkl'), map_location='cpu'))
 
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=True).to(dev_id)
+        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.download).to(dev_id)
         print("[ ARCH  ]:", MODEL, quality, args.metric)
         if args.download == False:
-            print("[ CKPTS ]:", checkpoint_dir)
-            image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
+            print("[ CKPTS ]:", args.ckpt)
+            image_comp.load_state_dict(torch.load(args.ckpt))
             image_comp.to(dev_id).train()
         else:
             print("[ CKPTS ]: Download from CompressAI Model Zoo", )
     # Gradient Mask
-    gnet = Gradient_Net().to(dev_id)
+    # gnet = Gradient_Net().to(dev_id)
     #msssim_func = msssim_func.cuda()
 
     # img_s = Image.open(source_dir).resize((16,16))
@@ -162,6 +140,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         mask_tar = 1. - mask_bkg
 
     mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
+    lpips_func = lpips.LPIPS(net='alex').to(dev_id)
     with torch.no_grad():
         # mask = gnet(im_s)
         mask = torch.ones_like(im_s)
@@ -170,19 +149,21 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         ori_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
         ori_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
         print("Original bpp:", ori_bpp_hyper + ori_bpp_main)
-        # print("Original PSNR:", )
+        # print("Original PSNR:", ) 
         # print("Original MS-SSIM:", )
     
     if crop == None:
         # rate
         lamb = args.lamb_attack
-        LOSS_FUNC = "L2"
+        # LOSS_FUNC = "L2"
+        LOSS_FUNC = args.att_metric
+
         print("using loss func:", LOSS_FUNC)
         print("Lambda:", lamb)
         # im = im_s.clone().detach().requires_grad_(True) + torch.randn(im_s.size()).cuda()
         noise = torch.zeros(im_s.size())
-        if args.target == None:
-            noise = torch.rand(im_s.size()) - 0.5
+        # if args.target == None:
+            # noise = torch.rand(im_s.size()) - 0.5
 
         noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
         optimizer = torch.optim.Adam([noise],lr=args.lr_attack)
@@ -228,29 +209,48 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
             # L1 loss
             if LOSS_FUNC == "L1":
-                loss_i = torch.mean(torch.abs(im_s - im_in))
+                # loss_i = torch.mean(torch.abs(im_s - im_in))
+                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))
                 if args.target == None:
                     loss_o = 1.0 - torch.mean(torch.abs(im_s - output_))
                 else:    
                     loss_o = torch.mean(torch.abs(output_t - output_))
+
+            if LOSS_FUNC == "ms-ssim":
+                # loss_i = 1. - mssim_func(im_s, im_in)
+                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))
+                loss_o = mssim_func(im_s, output_)
             
+            if LOSS_FUNC == "lpips":
+                # loss_i = lpips_func(im_s, im_in)
+                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))
+                loss_o = - lpips_func(im_s, output_)
+
             if LOSS_FUNC == "L2" and args.mask_loc != None:
                 # print("[Loss] L2 with target mask")
                 # l1_loss = torch.mean(torch.abs(im_s - im_in) * mask_tar)
-                l2_loss = torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar)
+                loss_tar = torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar)
                 # loss_tar = 0.01*l1_loss + l2_loss
-                loss_tar = l2_loss
-                loss_i = lamb_tar * loss_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
+                loss_bkg = torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
+                loss_i = lamb_bkg * loss_bkg + loss_tar 
                 # loss_i = lamb_tar * torch.mean(torch.abs(im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
                 
-                # loss_o = torch.mean((output_t - output_) * (output_t - output_) * mask_tar)
-                loss_o = torch.mean(torch.abs(output_t - output_) * mask_tar)
-            
-            # loss = loss_i + lamb * loss_o
-            if loss_i >= args.noise:
-                loss = loss_i
-            else:
-                loss = loss_o
+                loss_o_tar = torch.mean((output_t - output_) * (output_t - output_) * mask_tar)
+                loss_o_bkg = torch.mean((output_t - output_) * (output_t - output_) * mask_bkg)
+                # loss_o = lamb_bkg * loss_o_bkg + loss_o_tar 
+                loss_o = 0. * loss_bkg + loss_o_tar
+                # loss_o = torch.mean(torch.abs(output_t - output_) * mask_tar)
+                if loss_tar >= args.noise:
+                    loss = loss_i
+                else:
+                    loss = loss_o
+
+            else:                
+                # loss = loss_i + lamb * loss_o
+                if loss_i >= args.noise:
+                    loss = loss_i
+                else:
+                    loss = loss_o
 
             # with torch.no_grad():
                 # att = torch.tanh((output_s - output_) * (output_s - output_) / (noise_clipped*noise_clipped+0.0001))
@@ -281,13 +281,13 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             
             if i%100 == 0:
                 if args.mask_loc != None: 
-                    print(i, "overall loss", loss.item(), "loss_rec", loss_o.item(), "loss_in", loss_i.item(), loss_tar.item())
+                    print(i, "loss_rec", loss_o.item(), loss_o_tar.item(), loss_o_bkg.item(), "loss_in", loss_i.item(), loss_tar.item(), loss_bkg.item())
                 else:
-                    print(i, "overall loss", loss.item(), "loss_rec", loss_o.item(), "loss_in", loss_i.item())
+                    print(i, "loss_rec", loss_o.item(), "loss_in", loss_i.item())
                     
             if i % (args.steps//3) == 0:
                 # print(torch.mean(mask), torch.mean(att))
-                print("step:", i, "overall loss:", loss.item(), "loss_rec:", loss_o.item(), "loss_in:", loss_i.item())
+                print("step:", i, "loss_rec:", loss_o.item(), "loss_in:", loss_i.item())
                 lr_scheduler.step()
                 with torch.no_grad():
                     im_uint8 = torch.round(im_in * 255.0)/255.0

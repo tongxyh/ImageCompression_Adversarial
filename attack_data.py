@@ -16,6 +16,8 @@ from anchors import balle
 from datetime import datetime
 import time
 
+import coder
+
 class Gradient_Net(nn.Module):
   def __init__(self):
     super(Gradient_Net, self).__init__()
@@ -33,7 +35,6 @@ class Gradient_Net(nn.Module):
     grad_y = nn.functional.conv2d(x, self.weight_y, padding=1)
     gradient = torch.tanh(torch.abs(grad_x) + torch.abs(grad_y))
     return gradient
-
 
 def add_noise(x):
     noise = np.random.uniform(-0.5, 0.5, x.size())
@@ -83,7 +84,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric).to(dev_id)
         # print("[ ARCH  ]:", MODEL, quality, args.metric)
     # Gradient Mask
-    gnet = Gradient_Net().to(dev_id)
+    # gnet = Gradient_Net().to(dev_id)
     #msssim_func = msssim_func.cuda()
 
     # img_s = Image.open(source_dir).resize((16,16))
@@ -213,11 +214,10 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                 loss_i = torch.mean((im_s - im_in) * (im_s - im_in)) * mask_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in)) * mask_bkg
                 loss_o = torch.mean((output_t - output_) * (output_t - output_)) * mask_tar
 
-            loss = loss_i + lamb * loss_o
-            with torch.no_grad():
-                att = torch.tanh((output_s - output_) * (output_s - output_) / (noise_clipped*noise_clipped+0.0001))
-                # print(torch.mean(mask))
-                mask = 0.9999*mask + 0.0001*att
+            if loss_i >= args.noise:
+                loss = loss_i
+            else:
+                loss = loss_o
 
             optimizer.zero_grad()
             loss.backward()
@@ -232,38 +232,14 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     img = Image.fromarray(out[:H, :W, :])
     filename = args.source.split('/')[-1]
-    img.save("/workspace/ct/datasets/attack/hyper-4/div2k/"+filename)
+    img.save("/workspace/ct/datasets/attack/hyper-3/5k-2/"+filename)
 
     return 0, 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    # NIC config
-    parser.add_argument("-cn", "--ckpt_num", type=int,
-                        help="load checkpoint by step number")
-    parser.add_argument("-l", "--lamb", type=float,
-                        default=6400., help="lambda")
-    parser.add_argument("-j", "--job", type=str, default="", help="job name")
-    parser.add_argument('--ctx', dest='context', action='store_true')
-    parser.add_argument('--no-ctx', dest='context', action='store_false')
-    parser.add_argument('--post', dest='post', action='store_true')
+    args = coder.config()
 
-    parser.add_argument('-itx',    dest='iter_x', type=int, default=0,          help="iter step updating x")
-    parser.add_argument('-ity',    dest='iter_y', type=int, default=0,          help="iter step updating y")
-    parser.add_argument('-m',      dest='model',  type=str, default="hyper", help="compress model in 'factor','hyper','context','nonlocal'")
-    parser.add_argument('-metric', dest='metric', type=str, default="ms-ssim",  help="mse or ms-ssim")
-    parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
-    
-    # attack config
-    parser.add_argument('-step',dest='steps',       type=int,   default=10001,  help="attack iteration steps")
-    parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
-    parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
-    parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
-    parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")
-
-    parser.add_argument('--log', dest='log', action='store_true')
-    args = parser.parse_args()
     print("============================================================")
     print("[ IMAGE ]:", args.source, "->", args.target)
 
@@ -273,10 +249,11 @@ if __name__ == "__main__":
         print("[CONTEXT]:", args.context)
         print("==== Loading Checkpoint:", checkpoint, '====')
 
-    images = glob("/workspace/ct/datasets/datasets/div2k/*.png")
+    # sort images
+    images = sorted(glob("/workspace/ct/datasets/datasets/div2k/*.png"))
     N = len(images)
     index = 0
-    for image in images:
+    for image in images[20000:]:
         index += 1
         print(f'[{index}/{N}]')
         args.source = image
