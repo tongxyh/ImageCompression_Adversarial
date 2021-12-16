@@ -17,11 +17,18 @@ python attack_nlaic.py -q 8 -steps 10001 -s /workspace/ct/datasets/kodak/kodim20
 
 # HiFiC
 # yun.nju.edu.cn:5000/chentong/tensorflow:1.15.2-cuda10.0-cudnn7-py36-runtime
+# run in '/ct/code/compression/models' on 2080-1
 TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config mselpips --ckpt_dir ckpts/mse_lpips --tfds_dataset_name coco2014 --out_dir ./out
+CUDA_VISIBLE_DEVICES=0 TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config hific --ckpt_dir ckpts/hific --tfds_dataset_name coco2014 --out_dir ./out -lr 0.1 --images_glob /ct/datasets/kodak/kodim01.png
+CUDA_VISIBLE_DEVICES=0 TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config mselpips --ckpt_dir ckpts/mse_lpips --tfds_dataset_name coco2014 --out_dir ./out -lr 0.1 --images_glob /ct/datasets/kodak/kodim01.png
 
 # InvCompress
 # Note: replace original InvCompress/codes/compressai directory with compiled files in /workspace/InvCompress/codes/compressai
-python -m compressai.utils.attack_inv checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda
+python -m compressai.utils.attack_inv checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda -lr 0.001 -steps 10001
+
+#Weixin
+# \ct\code\fixed-point-main\quant_4
+python attack_fic.py -noise 0.001 -steps 10001 -s /workspace/ct/datasets/kodak/kodim01.png 
 
 # TIC
 python -m attack_TIC.py checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda
@@ -29,14 +36,14 @@ python -m attack_TIC.py checkpoint /workspace/ct/datasets/kodak/kodim01.png -a i
 
 ## Targeted Attack
 ```
-python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -steps 10001 --download \
--s /ct/code/mnist_png/testing/9/281.png \
+python attack_rd.py -m factorized -q 1 -metric mse -steps 10001 -n 0.02 --download \
+-s /ct/code/mnist_png/testing/2/72.png \
 -t /ct/code/mnist_png/testing/0/294.png
 
 # Cityscapes
-python attack_rd.py -m factorized -q 1 -metric mse -la 1.0 -steps 10001 --download --mask 112 199 103 137 \
+python attack_rd.py -m hyper -q 3 -metric ms-ssim -steps 10001 --download --mask 112 199 103 137 -la_bkg 0.01 -n 0.002 \
 -s ./attack/licenseplate/MZ2837_origin.png \
--t ./attack/licenseplate/MZ8723_origin.png
+-t ./attack/licenseplate/MZ2222_origin.png
 
 python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -steps 10001 --download --mask 112 199 103 137 -s ./attack/licenseplate/MZ2837_origin.png -t ./attack/licenseplate/MZ8723_origin.png -lr 1e-4
 python attack_rd.py -m hyper -la_bkg 0.0 -q 3 -metric ms-ssim -la 0.2 -steps 10001 --download --mask 56 100 51 69 -s ./attack/licenseplate/MZ2837_120x120.png -t ./attack/licenseplate/MZ8723_120x120.png -lr 1e-4
@@ -60,11 +67,14 @@ python -m compressai.utils.eval_model checkpoint ./attack/ -a invcompress -exp e
 
 ## Data Augmentation
 ```
+# step 1: adversarial example generation
 python attack_data.py -steps 1001 -m hyper -q 3 -lr 0.01 -n 0.005
 
+# step 2: training with augmented dataset
 python train.py -m hyper -la 0.1 -q 3 -lr 1e-5 --pretrained
 python train.py -m hyper -la 0.1 -q 3 -metric mse -lr 1e-4 -ckpt ./ckpts/attack/anchor/xxx
 
+# step 3: test
 python visual.py -m hyper -metric ms-ssim -q 2 -s /workspace/ct/datasets/kodak/kodim10.png --download
 python visual.py -m hyper -metric ms-ssim -q 3 -s ./attack/kodak/fake3333_ -ckpt ./ckpts/attack/anchor/hyper-3-fromscratch//ae_100_0_0.02102314_0.14399883.pkl
 ```
@@ -88,6 +98,15 @@ python -m compressai.utils.eval_model checkpoint ./attack/fake_in.png -a invcomp
 python visual_distribution.py -m hyper -metric ms-ssim -q 2 -s "/workspace/ct/datasets/attack/hyper-2/adversarial/*.png" --download
 python visual_distribution.py -m hyper -metric ms-ssim -q 2 -s "/workspace/ct/datasets/datasets/div2k/*.png" --download
 ```
+
+## recompression
+```
+# pretrained model from compressAI
+python recompression.py -s "/workspace/ct/datasets/kodak/kodim*.png" -m hyper -q 3 -metric ms-ssim -steps 50 --download
+# locally finetuned model
+python recompression.py -s "/workspace/ct/datasets/kodak/kodim*.png" -m hyper -q 3 -metric ms-ssim -steps 50 -ckpt xxx.pkl
+```
+
 ## JPEG sr6 anchor
 ```
 # DO NOT SUPPORT PNG format
