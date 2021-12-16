@@ -122,8 +122,8 @@ def inference(model, x, savedir = "", idx = 1):
 
         # cur_img = tran1(out_dec["x_hat"][0])
         cur_img = tran1(out_dec["x_hat"][0].cpu())
-        cur_img.save(os.path.join(savedir,'{:02d}'.format(idx)+"_"+'{:.2f}'.format(cur_psnr)+"_"+'{:.3f}'.format(bpp)+"_"+'{:.3f}'.format(cur_ssim)+".png"))
-        
+        # cur_img.save(os.path.join(savedir,'{:02d}'.format(idx)+"_"+'{:.2f}'.format(cur_psnr)+"_"+'{:.3f}'.format(bpp)+"_"+'{:.3f}'.format(cur_ssim)+".png"))
+        cur_img.save(os.path.join(savedir,idx+"_"+'{:.2f}'.format(cur_psnr)+"_"+'{:.3f}'.format(bpp)+"_"+'{:.3f}'.format(cur_ssim)+".png"))
     return {
         "psnr": psnr(x, out_dec["x_hat"]),
         "ms-ssim": ms_ssim(x, out_dec["x_hat"], data_range=1.0).item(),
@@ -169,6 +169,7 @@ def load_checkpoint(arch: str, checkpoint_path: str) -> nn.Module:
 def attack(args, model, filepath):    
     device = next(model.parameters()).device
     x = read_image(filepath).to(device)
+    filename = filepath.split("/")[-1][:-4]
     x = x.unsqueeze(0)  
     noise = torch.zeros(x.size())
 
@@ -177,11 +178,11 @@ def attack(args, model, filepath):
     # noise = noise.half()
 
     noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
-    optimizer = torch.optim.Adam([noise],lr=0.001)
+    optimizer = torch.optim.Adam([noise],lr=args.lr)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)
     
-    steps = 100001
-    for i in range(steps):  
+    steps = args.steps
+    for i in range(args.steps):  
         im_in = torch.clamp(x+noise, min=0., max=1.0)
         y = model.g_a_func(im_in)
         
@@ -252,7 +253,7 @@ def attack(args, model, filepath):
                 img = Image.fromarray(fin)
                 img.save("./attack/fake%d_in_%0.8f.png"%(i, loss.item())) 
 
-                rv = inference(model.float().cpu(), x[0].float().cpu()+noise[0].float().cpu(), savedir=args.savedir)
+                rv = inference(model.float().cpu(), x[0].float().cpu()+noise[0].float().cpu(), savedir=args.savedir, idx=filename+'_'+str(steps))
                 bpp = rv['bpp']
                 print("bpp:", rv['bpp'])
                 print('psnr', rv['psnr'])
@@ -288,6 +289,9 @@ def setup_args():
     parent_parser = argparse.ArgumentParser(
         add_help=False,
     )
+    
+    parent_parser.add_argument("-steps", type=int, help="attack steps")
+    parent_parser.add_argument("-lr", type=float, help="attack learning rate")
 
     # Common options.
     parent_parser.add_argument("dataset", type=str, help="dataset path")

@@ -93,7 +93,10 @@ def attack_trained_model(args,
   hific = model.HiFiC(config, helpers.ModelMode.ATTACK)
 
   lamb = args.lamb_attack
-  filename = "/ct/datasets/kodak/kodim19.png"
+  # filename = "/ct/datasets/kodak/kodim19.png"
+  filename = images_glob
+  image_name = images_glob.split("/")[-1][:-4]
+
   print(f"[Input] {filename}")
   input_image = read_png(filename)
   with tf.Session() as sess:
@@ -103,7 +106,8 @@ def attack_trained_model(args,
   # with tf.Session() as sess:
   #     noise_ = sess.run(noise)
   print(shape)
-  noise_ = np.random.randn(shape[0],shape[1],shape[2],shape[3]).astype(np.float32)*(255.0/10.0)
+  # noise_ = np.random.randn(shape[0],shape[1],shape[2],shape[3]).astype(np.float32)*(255.0/10.0)
+  noise_ = np.zeros((shape[0],shape[1],shape[2],shape[3])).astype(np.float32)
   with tf.name_scope("attacker") as scope:
     noise = tf.Variable(noise_, name="noise")
     # mask = tf.Variable(tf.ones_like(noise), name="mask")
@@ -135,7 +139,7 @@ def attack_trained_model(args,
     initial_learning_rate = args.lr_attack
     learning_rate = tf.train.exponential_decay(initial_learning_rate,
                                              global_step=global_step,
-                                             decay_steps=33333,decay_rate=0.33)
+                                             decay_steps=3333,decay_rate=0.33)
     # TODO: optimize only noise
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost, var_list=[noise], global_step=global_step)
   
@@ -158,7 +162,7 @@ def attack_trained_model(args,
     saver.restore(sess, latest_ckpt)
 
     hific.prepare_for_arithmetic_coding(sess)
-    steps = 100001
+    steps = args.steps
     for i in range(steps):
       if max_images and i == max_images:
         break
@@ -187,7 +191,7 @@ def attack_trained_model(args,
 
         # # Save images.
         if i % 10000 == 0:
-          name = 'test'
+          name = image_name
           Image.fromarray(inp_np).save(
               os.path.join(out_dir, f'{name}_input_{i}_{ls_in:.4f}_{ls_out:.4f}.png'))
           Image.fromarray(otp_np).save(
@@ -239,8 +243,9 @@ def parse_args(argv):
   parser.add_argument('--out_dir', required=True, help='Where to save outputs.')
 
   parser.add_argument('--images_glob', help='If given, use TODO')
-  parser.add_argument("-la", dest="lamb_attack", type=float, default=0.2, help="attack lambda")
-  parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
+  parser.add_argument("-la", dest="lamb_attack",type=float, default=0.2,  help="attack lambda")
+  parser.add_argument("-lr",  dest="lr_attack", type=float, default=0.001,help="attack learning rate")
+  parser.add_argument("-steps",  dest="steps",   type=int,   default=10001,help="attack learning rate")
   helpers.add_tfds_arguments(parser)
 
   args = parser.parse_args(argv[1:])

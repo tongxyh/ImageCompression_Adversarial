@@ -83,6 +83,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     # img_s = Image.open(source_dir).resize((16,16))
     img_s = Image.open(args.source)
+    filename = args.source.split("/")[-1][:-4]
     # img_s = np.array(img_s)/255.0/5.0+0.5
     img_s = np.array(img_s)/255.0
 
@@ -123,17 +124,28 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         im_t = im_t.view(1, C, H_PAD, W_PAD).to(dev_id)
         with torch.no_grad():
             output_t, _, _, _, _ = image_comp(im_t, False, CONTEXT, POSTPROCESS)
-        
+            output_t[:,:,H:,:] = 0.
+            output_t[:,:,:,W:] = 0.            
+            out = torch.clamp(output_t, min=0., max=1.0)
+            out = out.data[0].cpu().numpy()
+            out = np.round(out * 255.0)
+            out = out.astype('uint8')
+            out = out.transpose(1, 2, 0)
+            img = Image.fromarray(out[:H, :W, :])
+            img.save("./attack/kodak/%s_target_out.png"%(filename))
+
         ## TODO: background masking
-        mask = torch.ones(1,C,H_PAD,W_PAD)
+        mask = torch.zeros(1,C,H_PAD,W_PAD)
+        print(H_PAD, W_PAD)
         # mask[:,:, PADDING:H+PADDING, PADDING:W+PADDING] = torch.zeros(1,C,H,W)
         
         if args.mask_loc != None:
+            mask = torch.ones(1,C,H_PAD,W_PAD)
             # x0,y0 = 83,78
             # x1,y1 = 151,103
-            lamb_bkg = args.lamb_bkg
+            # lamb_bkg = args.lamb_bkg
             lamb_tar = args.lamb_tar
-            print(args.mask_loc, "lamb_bkg:", lamb_bkg)
+            print(args.mask_loc, "lamb_bkg:", args.lamb_bkg_in, args.lamb_bkg_out, "lamb_tar:", lamb_tar)
             x0,x1,y0,y1 = args.mask_loc # W, H
             mask[:,:, y0:y1, x0:x1] = torch.zeros(1,C,y1-y0,x1-x0) #(y0, y1), (x0, x1)
         mask_bkg = mask.to(dev_id)
@@ -181,25 +193,33 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             # noise_clipped = torch.clamp(mask*noise, min=-noise_range, max=noise_range)
             noise_clipped = ops.Up_bound.apply(ops.Low_bound.apply(noise, -noise_range), noise_range)
             # im_in = torch.clamp(im_s+noise_clipped, min=0., max=1.0)
+            
             im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
-            if args.target != None:
-                im_in = torch.clamp(im_s+noise, min=0., max=1.0)
+            # im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+mask_tar*noise_clipped, 0.), 1.)
             # print("noised:",im_in)
             # print("source:",im_s)
             # 1. NO PADDING
+            
             im_in[:,:,H:,:] = 0.
             im_in[:,:,:,W:] = 0.
-            
-            output, y_main, y_hyper, p_main, p_hyper = image_comp(im_in, TRAINING, CONTEXT, POSTPROCESS)
+
+            # print("TEST 0:", torch.sum(im_in) - torch.sum(im_in[:,:,:H,:W]))
+            # print(torch.sum(im_in[:,:,H:,:]).item(), torch.sum(im_in[:,:,:,W:]).item(), torch.sum(im_in[:,:,H:,W:]).item(), torch.sum(im_in[:,:,:H,:W]).item(), torch.sum(im_in).item())
+            # output, y_main, y_hyper, p_main, p_hyper = image_comp(im_in, TRAINING, CONTEXT, POSTPROCESS)
+
+
             # output_ = torch.clamp(output, min=0., max=1.0)
             # output_ = ops.Up_bound.apply(ops.Low_bound.apply(output, 0.), 1.)
-
+            y_main = image_comp.net.g_a(im_in)
             x_ = image_comp.net.g_s(y_main)
             output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
-
+            output_[:,:,H:,:] = 0.
+            output_[:,:,:,W:] = 0.
+            
             if LOSS_FUNC == "L2" and args.mask_loc == None:
                 # print("[Loss] L2 with no mask")
-                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
+                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))
+                # TODO:TEST 1                
                 if args.target == None:
                     # loss_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(y_s, y_)
                     loss_o = 1. - torch.mean((im_s - output_) * (im_s - output_)) # MSE(x_, y_)
@@ -232,13 +252,12 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                 loss_tar = torch.mean((im_s - im_in) * (im_s - im_in) * mask_tar)
                 # loss_tar = 0.01*l1_loss + l2_loss
                 loss_bkg = torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
-                loss_i = lamb_bkg * loss_bkg + loss_tar 
+                loss_i = args.lamb_bkg_in * loss_bkg + loss_tar 
                 # loss_i = lamb_tar * torch.mean(torch.abs(im_s - im_in) * mask_tar) + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in) * mask_bkg)
-                
                 loss_o_tar = torch.mean((output_t - output_) * (output_t - output_) * mask_tar)
                 loss_o_bkg = torch.mean((output_t - output_) * (output_t - output_) * mask_bkg)
                 # loss_o = lamb_bkg * loss_o_bkg + loss_o_tar 
-                loss_o = 0. * loss_bkg + loss_o_tar
+                loss_o = args.lamb_bkg_out * loss_bkg + loss_o_tar
                 # loss_o = torch.mean(torch.abs(output_t - output_) * mask_tar)
                 if loss_tar >= args.noise:
                     loss = loss_i
@@ -281,7 +300,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             
             if i%100 == 0:
                 if args.mask_loc != None: 
-                    print(i, "loss_rec", loss_o.item(), loss_o_tar.item(), loss_o_bkg.item(), "loss_in", loss_i.item(), loss_tar.item(), loss_bkg.item())
+                    print(i, "loss_rec(ALL/TAR/BKG):", loss_o.item(), loss_o_tar.item(), loss_o_bkg.item(), "loss_in(ALL/TAR/BKG):", loss_i.item(), loss_tar.item(), loss_bkg.item())
                 else:
                     print(i, "loss_rec", loss_o.item(), "loss_in", loss_i.item())
                     
@@ -308,9 +327,8 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     fin = fin.transpose(1, 2, 0)
                     img = Image.fromarray(fin[:H, :W, :])
                     # img = Image.fromarray(fin[PADDING:H+PADDING, PADDING:W+PADDING, :])
-                    
-                    img.save("./attack/kodak/fake%d_in_%0.8f.png"%(i, loss.item())) 
-                    img.save("./attack/kodak/final_in.png")
+                    img.save("./attack/kodak/%s_fake%d_in_%0.8f.png"%(filename, i, loss.item())) 
+                    # img.save("./attack/kodak/final_in.png")
                     # debug
                     # img_sc = Image.open("./mnist/8_0/fake%d_in_%0.8f.png"%(i, loss.item()))
                     # img_sc = np.array(img_sc)
@@ -335,6 +353,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     bpp = bpp_main + bpp_hyper
                     print("bpp:", bpp.item())
                     output_ = torch.clamp(output, min=0., max=1.0)
+                    # print("loss:", torch.mean((output_ - output_t)**2*mask_tar))
                     out = output_.data[0].cpu().numpy()
                     out = np.round(out * 255.0)
                     out = out.astype('uint8')
@@ -342,22 +361,22 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     
                     # img = Image.fromarray(out[PADDING:H+PADDING, PADDING:W+PADDING, :])
                     img = Image.fromarray(out[:H, :W, :])
-                    img.save("./attack/kodak/fake%d_out_%0.4f_%0.8f.png"%(i, bpp.item(), loss.item()))
+                    img.save("./attack/kodak/%s_fake%d_out_%0.4f_%0.8f.png"%(filename, i, bpp.item(), loss.item()))
     if args.log:
         writer.close()
     
     # attacked recons
-    img.save("./attack/kodak/final_out.png")
+    # img.save("./attack/kodak/final_out.png")
 
-    # original recons
-    output_ = torch.clamp(output_s, min=0., max=1.0)
-    out = output_.data[0].cpu().numpy()
-    out = np.round(out * 255.0)
-    out = out.astype('uint8')
-    out = out.transpose(1, 2, 0)
+    # # original recons
+    # output_ = torch.clamp(output_s, min=0., max=1.0)
+    # out = output_.data[0].cpu().numpy()
+    # out = np.round(out * 255.0)
+    # out = out.astype('uint8')
+    # out = out.transpose(1, 2, 0)
 
-    img = Image.fromarray(out[:H, :W, :])
-    img.save("./attack/kodak/origin_out.png")
+    # img = Image.fromarray(out[:H, :W, :])
+    # img.save("./attack/kodak/origin_out.png")
 
     return 0, 0
 

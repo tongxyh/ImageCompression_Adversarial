@@ -86,14 +86,14 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     image_comp = image_comp.to(dev_id)
     context = context.to(dev_id)
     # Gradient Mask
-    gnet = Gradient_Net().to(dev_id)
+    # gnet = Gradient_Net().to(dev_id)
     #msssim_func = msssim_func.cuda()
 
     # img_s = Image.open(source_dir).resize((16,16))
     img_s = Image.open(args.source)
     # img_s = np.array(img_s)/255.0/5.0+0.5
     img_s = np.array(img_s)/255.0
-
+    filename = args.source.split("/")[-1][:-4]
     if len(img_s.shape) < 3:
         H, W = img_s.shape
         img_s = np.tile(img_s.reshape((H,W,1)), (1,1,3))
@@ -165,8 +165,8 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         print("Lambda:", lamb)
         # im = im_s.clone().detach().requires_grad_(True) + torch.randn(im_s.size()).cuda()
         noise = torch.zeros(im_s.size())
-        if args.target == None:
-            noise = torch.rand(im_s.size()) - 0.5
+        # if args.target == None:
+        #     noise = torch.rand(im_s.size()) - 0.5
  
         noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
         optimizer = torch.optim.Adam([noise],lr=args.lr_attack)
@@ -246,7 +246,8 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                 writer.add_scalar('Loss/mse_out',  mse_o.item(), i)
                 writer.add_scalar('Loss/bpp',  bpp.item(), i)
 
-            if i % (args.steps//30) == 0:
+            # if i % (args.steps//30) == 0:
+            if i % 1000 == 0:    
                 # print(torch.mean(mask), torch.mean(att))
                 print("step:", i, "overall loss:", loss.item(), "loss_rec:", loss_o.item(), "loss_in:", loss_i.item())
                 if i % (args.steps/3) == 0:
@@ -272,7 +273,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     img = Image.fromarray(fin[:H, :W, :])
                     # img = Image.fromarray(fin[PADDING:H+PADDING, PADDING:W+PADDING, :])
                     
-                    img.save("./attack/kodak/fake%d_in_%0.8f.png"%(i, loss.item())) 
+                    img.save("./attack/kodak/%s_fake%d_in_%0.8f.png"%(filename, i, loss.item())) 
                     img.save("./attack/kodak/final_in.png")
 
                     output, _, p_hyper, y_main_q, hyper_dec = image_comp(im_, 2)   
@@ -290,7 +291,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     
                     # img = Image.fromarray(out[PADDING:H+PADDING, PADDING:W+PADDING, :])
                     img = Image.fromarray(out[:H, :W, :])
-                    img.save("./attack/kodak/fake%d_out_%0.4f_%0.8f.png"%(i, bpp.item(), loss.item()))
+                    img.save("./attack/kodak/%s_fake%d_out_%0.4f_%0.8f.png"%(filename, i, bpp.item(), loss.item()))
     if args.log:
         writer.close()
     
@@ -329,7 +330,7 @@ if __name__ == "__main__":
     parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
     
     # attack config
-    parser.add_argument('-step',dest='steps',       type=int,   default=10001,  help="attack iteration steps")
+    parser.add_argument('-steps',dest='steps',      type=int,   default=10001,  help="attack iteration steps")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
     parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
