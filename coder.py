@@ -16,20 +16,8 @@ from anchors import balle
 from datetime import datetime
 
 
-def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
-
-    TRAINING = False
-    dev_id = "cuda:0"
-    # read image
-    precise = 16
-    C = 3
-    if crop == None:
-        tile = 64.
-    else:
-        tile = crop * 1.0
-    # print('====> Encoding Image:', im_dir)
-
-    ## model initalization
+def load_model(args):
+    dev_id = args.gpu
     MODEL = args.model
     quality = args.quality
     download_model_zoo = args.download
@@ -44,15 +32,29 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
         # print("[ ARCH  ]:", MODEL) 
 
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=True).to(dev_id)
-        # print("[ ARCH  ]:", MODEL, quality, args.metric)
-        if download_model_zoo == False:
-            # load from local ckpts
-            image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
+        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.download).to(dev_id)
+        print("[ ARCH  ]:", MODEL, quality, args.metric)
+        if args.download == False: # load from local ckpts
+            print("Load from local:", args.ckpt)
+            image_comp.load_state_dict(torch.load(args.ckpt))
             image_comp.to(dev_id).eval()
-    mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
+    
+    return image_comp
 
-    img = Image.open(args.source)
+def code(args, model, input_file, out_file, crop=None):
+    image_comp = model
+    TRAINING = False
+    dev_id = args.gpu
+    C = 3
+    if crop == None:
+        tile = 64.
+    else:
+        tile = crop * 1.0
+    # print('====> Encoding Image:', im_dir)
+    mssim_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
+    
+    # read image
+    img = Image.open(input_file)
     img = np.array(img)/255.0
 
     if len(img.shape) < 3:
@@ -74,11 +76,19 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     with torch.no_grad():
         # original_image
-        output, y_main_, y_hyper, p_main, p_hyper = image_comp(im, False, CONTEXT, POSTPROCESS)
+        output, y_main_, y_hyper, p_main, p_hyper = image_comp(im, False, args.context, args.post)
 
         bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
         bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
         output = torch.clamp(output, min=0., max=1.0)
+
+        ## TODO: save image
+        out = output.data[0].cpu().numpy()
+        out = np.round(out * 255.0)
+        out = out.astype('uint8')
+        out = out.transpose(1, 2, 0)
+        img = Image.fromarray(out[:H, :W, :])
+        img.save(out_file)
 
         # PSNR
         mse = torch.mean((im - output)**2)
@@ -88,33 +98,36 @@ def test(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
 def config():
     parser = argparse.ArgumentParser()
+    parser.add_argument("-gpu", type=int, default=0, help="gpu index")
     # NIC config
-    parser.add_argument("-cn", "--ckpt_num", type=int,
-                        help="load checkpoint by step number")
-    parser.add_argument("-l", "--lamb", type=float,
-                        default=6400., help="lambda")
-    parser.add_argument("-j", "--job", type=str, default="", help="job name")
-    parser.add_argument('--ctx', dest='context', action='store_true')
+    parser.add_argument("-cn", "--ckpt_num", type=int, help="load checkpoint by step number")
+    parser.add_argument("-l",  "--lamb",     type=float, default=6400., help="lambda")
+    parser.add_argument("-j",  "--job",      type=str,   default="", help="job name")
+    parser.add_argument('--ctx',    dest='context', action='store_true')
     parser.add_argument('--no-ctx', dest='context', action='store_false')
     parser.add_argument('--post', dest='post', action='store_true')
 
     parser.add_argument('-itx',    dest='iter_x', type=int, default=0,          help="iter step updating x")
     parser.add_argument('-ity',    dest='iter_y', type=int, default=0,          help="iter step updating y")
-    parser.add_argument('-m',      dest='model',  type=str, default="nonlocal", help="compress model in 'factor','hyper','context','nonlocal'")
+    parser.add_argument('-m',      dest='model',  type=str, default="hyper", help="compress model in 'factor','hyper','context','cheng2020','nonlocal'")
     parser.add_argument('-metric', dest='metric', type=str, default="ms-ssim",  help="mse or ms-ssim")
     parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
     
     # attack config
-    parser.add_argument('-step',dest='steps',       type=int,   default=10001,  help="attack iteration steps")
+    parser.add_argument('-steps',dest='steps',      type=int,   default=10001,  help="attack iteration steps")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
+    parser.add_argument("-noise",dest="noise",      type=float, default=0.001,  help="input noise threshold")
+    parser.add_argument("-lr_train",  dest="lr_train",   type=float, default=0.0001,  help="train learning rate")
     parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
     parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")
     parser.add_argument("-ckpt",dest="ckpt",        type=str,   default=None,   help="local checkpoint dir")
-    parser.add_argument('--d',  dest='download',    action='store_true')
+    parser.add_argument('--download',  dest='download',    action='store_true')
     parser.add_argument('--mask_loc', nargs='+', type=int, default=None)
-    parser.add_argument("-la_bkg",  dest="lamb_bkg",type=float, default=1.0,    help="attack lambda of background area")
-    parser.add_argument("-la_tar",  dest="lamb_tar",type=float, default=1.0,    help="attack lambda of target area")    
+    parser.add_argument("-la_bkg_in",  dest="lamb_bkg_in", type=float, default=1.0,    help="attack lambda of background area of input")
+    parser.add_argument("-la_bkg_out", dest="lamb_bkg_out",type=float, default=1.0,    help="attack lambda of background area of output")    
+    parser.add_argument("-la_tar",  dest="lamb_tar",type=float, default=1.0,    help="attack lambda of target area")   
+    parser.add_argument('-att_metric', dest='att_metric', type=str, default="L2",  help="L1, L2, ms-ssim or lpips") 
 
     # train config
     parser.add_argument('--pretrained', dest='pretrained', action='store_true')

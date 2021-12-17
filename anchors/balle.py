@@ -6,6 +6,7 @@ from torchvision import transforms
 from PIL import Image
 import compressai
 from compressai.zoo import bmshj2018_factorized, bmshj2018_hyperprior, mbt2018, cheng2020_anchor
+from anchors.utils import update_registered_buffers
 
 
 class Image_coder(torch.nn.Module):
@@ -53,6 +54,22 @@ class Image_coder(torch.nn.Module):
         x_hat = self.net.g_s(y_hat)        
         return x_hat, y, z_hat, y_likelihoods, z_likelihoods
 
+    def load_state_dict(self, state_dict):
+        # Dynamically update the entropy bottleneck buffers related to the CDFs
+        update_registered_buffers(
+            self.net.entropy_bottleneck,
+            "net.entropy_bottleneck",
+            ["_quantized_cdf", "_offset", "_cdf_length"],
+            state_dict,
+        )
+        if self.MODEL == "hyper" or self.MODEL == "context" or self.MODEL == "cheng2020":
+            update_registered_buffers(
+                self.net.gaussian_conditional,
+                "net.gaussian_conditional",
+                ["_quantized_cdf", "_offset", "_cdf_length", "scale_table"],
+                state_dict,
+            )  
+        super().load_state_dict(state_dict)
 # TEST
 # MODEL = sys.argv[2] #factorized, hyper, context
 # quality = int(sys.argv[3])
