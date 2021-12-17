@@ -81,8 +81,14 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     #         os.path.join(checkpoint_dir, models[model_index] + r'.pkl'), map_location='cpu'))
 
     if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric).to(dev_id)
+        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.download).to(dev_id)
         # print("[ ARCH  ]:", MODEL, quality, args.metric)
+        if args.download == False:
+            print("[ CKPTS ]:", args.ckpt)
+            image_comp.load_state_dict(torch.load(args.ckpt))
+            image_comp.to(dev_id).train()
+        else:
+            print("[ CKPTS ]: Download from CompressAI Model Zoo", )
     # Gradient Mask
     # gnet = Gradient_Net().to(dev_id)
     #msssim_func = msssim_func.cuda()
@@ -232,7 +238,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     img = Image.fromarray(out[:H, :W, :])
     filename = args.source.split('/')[-1]
-    img.save("/workspace/ct/datasets/attack/hyper-3/5k-2/"+filename)
+    img.save("/workspace/ct/datasets/attack/hyper-3/iter-2/"+filename)
 
     return 0, 0
 
@@ -250,10 +256,10 @@ if __name__ == "__main__":
         print("==== Loading Checkpoint:", checkpoint, '====')
 
     # sort images
-    images = sorted(glob("/workspace/ct/datasets/datasets/div2k/*.png"))
+    images = sorted(glob("/workspace/ct/datasets/datasets/div2k/div2k/*.png"))
     N = len(images)
     index = 0
-    for image in images[20000:]:
+    for image in images[40000:]:
         index += 1
         print(f'[{index}/{N}]')
         args.source = image
