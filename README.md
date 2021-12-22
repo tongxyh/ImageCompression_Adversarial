@@ -3,21 +3,22 @@
 ## (Untargeted) Distorion Attack
 ```
 # Balle2016, Balle2018, Minnen, Cheng2020
-python attack_rd.py -m hyper -metric ms-ssim -q 3 -steps 10001 -s xxx.png --download -noise 0.001
+python attack_rd.py -m facotorized/hyper/context/cheng2020 -metric mse/ms-ssim -q [1-8] -steps 10001 -s xxx.png --download -noise 0.001
 
+# Note that for NLAIC\HiFiC\InvCompress\Weixin2021 you need to first get their original code and pretrained models
 # NLAIC
 python attack_nlaic.py -q 8 -steps 10001 -s xxx.png
 
 # HiFiC
 # yun.nju.edu.cn:5000/chentong/tensorflow:1.15.2-cuda10.0-cudnn7-py36-runtime
 # run in '/ct/code/compression/models' on 2080-1
-CUDA_VISIBLE_DEVICES=0 TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config hific --ckpt_dir ckpts/hific --tfds_dataset_name coco2014 --out_dir ./out -lr 0.1 --images_glob /ct/datasets/kodak/kodim01.png
+CUDA_VISIBLE_DEVICES=0 TF_FORCE_GPU_ALLOW_GROWTH=true python3 -m hific.attack_hific --config hific --ckpt_dir ckpts/hific --tfds_dataset_name coco2014 --out_dir ./out -lr 0.1 --images_glob xxx.png
 
 # InvCompress
 # Note: replace original InvCompress/codes/compressai directory with compiled files in /workspace/InvCompress/codes/compressai
-python -m compressai.utils.attack_inv checkpoint /workspace/ct/datasets/kodak/kodim01.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda -lr 0.001 -steps 10001
+python -m compressai.utils.attack_inv checkpoint xxx.png -a invcompress -exp exp_01_mse_q1 -s ../results/exp_01 --cuda -lr 0.001 -steps 10001
 
-# Weixin
+# Weixin2021
 # \ct\code\fixed-point-main\quant_4
 python attack_fic.py -noise 0.001 -steps 10001 -s xxx.png 
 ```
