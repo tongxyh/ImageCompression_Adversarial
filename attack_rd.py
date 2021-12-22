@@ -16,8 +16,9 @@ from anchors import balle
 from utils import torch_msssim, ops
 
 
-def attack(args, CONTEXT=True, POSTPROCESS=True, crop=None):
+def attack(args, crop=None):
     dev_id = "cuda:0"
+    TRAINING = False
     C = 3
     if crop == None:
         tile = 64.
@@ -84,9 +85,9 @@ def attack(args, CONTEXT=True, POSTPROCESS=True, crop=None):
         im_t = im_t.permute(2, 0, 1).contiguous()
         im_t = im_t.view(1, C, H_PAD, W_PAD).to(dev_id)
         with torch.no_grad():
-            output_t, _, _, _, _ = image_comp(im_t, False, CONTEXT, POSTPROCESS)
+            output_t, _, _, _, _ = image_comp(im_t, TRAINING)
             output_t[:,:,H:,:] = 0.
-            output_t[:,:,:,W:] = 0.            
+            output_t[:,:,:,W:] = 0.
             out = torch.clamp(output_t, min=0., max=1.0)
             out = out.data[0].cpu().numpy()
             out = np.round(out * 255.0)
@@ -109,7 +110,7 @@ def attack(args, CONTEXT=True, POSTPROCESS=True, crop=None):
     lpips_func = lpips.LPIPS(net='alex').to(dev_id)
 
     with torch.no_grad():
-        output_s, y_main_, y_hyper, p_main, p_hyper = image_comp(im_s, False, CONTEXT, POSTPROCESS)
+        output_s, y_main_, y_hyper, p_main, p_hyper = image_comp(im_s, TRAINING)
         ori_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
         ori_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
         print("Original bpp:", ori_bpp_hyper + ori_bpp_main)
@@ -215,7 +216,7 @@ def attack(args, CONTEXT=True, POSTPROCESS=True, crop=None):
                     img = Image.fromarray(fin[:H, :W, :])
                     img.save("./attack/kodak/%s_fake%d_in_%0.8f.png"%(filename, i, loss.item())) 
 
-                    output, y_main, y_hyper, p_main, p_hyper = image_comp(im_, False, CONTEXT, POSTPROCESS)   
+                    output, y_main, y_hyper, p_main, p_hyper = image_comp(im_, TRAINING)   
                     
                     bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
                     bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
@@ -238,4 +239,4 @@ if __name__ == "__main__":
     args = coder.config()
     print("============================================================")
     print("[ IMAGE ]:", args.source, "->", args.target)
-    bpp, psnr = attack(args, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
+    bpp, psnr = attack(args, crop=None)

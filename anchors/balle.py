@@ -22,7 +22,7 @@ class Image_coder(torch.nn.Module):
         if MODEL == "cheng2020":
             self.net = cheng2020_anchor(quality=quality, metric=metric, pretrained=pretrained)
 
-    def forward(self, x, TRAINING, CONTEXT, POSTPROCESS):
+    def forward(self, x, TRAINING):
         if TRAINING:
             self.net.train()
         else:
