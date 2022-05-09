@@ -1,53 +1,99 @@
-import os
-import sys
 import argparse
+from audioop import avg
+import math
+import os
+import random
+import shutil
+import sys
+from datetime import datetime
+import time
 from glob import glob
 
+import lpips
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.tensorboard import SummaryWriter
-import numpy as np
-import random
+from compressai import datasets
 from PIL import Image
-from thop import profile
+from torchvision import transforms
+from pytorch_msssim import MS_SSIM
+from utils import ops
 
-import model
-from utils import torch_msssim, ops
-from anchors import balle
-from torchvision import datasets, transforms
-from datetime import datetime
+
 import coder
-import lpips
+from attack_rd import attack_
 
-class Gradient_Net(nn.Module):
-  def __init__(self):
-    super(Gradient_Net, self).__init__()
-    kernel_x = [[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]
-    kernel_x = torch.FloatTensor(kernel_x).unsqueeze(0).unsqueeze(0).cuda() # [n_out, n_in, k_x, k_y]
+class RateDistortionLoss(nn.Module):
+    """Custom rate distortion loss with a Lagrangian parameter."""
 
-    kernel_y = [[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]]
-    kernel_y = torch.FloatTensor(kernel_y).unsqueeze(0).unsqueeze(0).cuda()
+    def __init__(self, metric="mse", lmbda=1e-2):
+        super().__init__()
+        self.metric = metric
+        self.mse = nn.MSELoss()
+        self.mssim = MS_SSIM(data_range=1, size_average=True, channel=3)
+        self.lmbda = lmbda
+        ## about lambda: https://interdigitalinc.github.io/CompressAI/zoo.html 
+        # [q3 - mse: 0.0067 * (255 ^ 2)]
+        # [q3 - mssim: 8.73]
+        # self.lpips = lpips.LPIPS(net='alex').to(self.args.device)
+        # lpips_loss = torch.mean(loss_func(batch_x, output))
 
-    self.weight_x = nn.Parameter(data=kernel_x.repeat(1,3,1,1), requires_grad=False)
-    self.weight_y = nn.Parameter(data=kernel_y.repeat(1,3,1,1), requires_grad=False)
+    def forward(self, output, target, training=True):
+        N, _, H, W = target.size()
+        out = {}
+        num_pixels = N * H * W
+        out["bpp_loss"] = sum(
+                (torch.log(likelihoods).sum() / (-math.log(2) * num_pixels))
+                for likelihoods in output["likelihoods"].values()
+            )
+        # output["x_hat"] = ops.Low_bound.apply(ops.Up_bound.apply(output["x_hat"],1.))
+        if not training:
+            output["x_hat"] = torch.clamp(output["x_hat"],min=0.,max=1.)
+            out["mse_loss"] = self.mse(output["x_hat"], target)
+            out["msim_loss"] = self.mssim(output["x_hat"], target)
+            out["psnr"] = -10.*math.log10(out["mse_loss"])
+            out["msim_dB"] = -10.*math.log10(1.-out["msim_loss"])
+        else:
+            # if args.adv:
+            #         out["bpp_loss"] = out["bpp_loss"] * 0.
+            if self.metric == "mse":
+                out["distortion_loss"] = self.mse(output["x_hat"], target)
+                out["loss"] = self.lmbda * 255 ** 2 * out["distortion_loss"] + out["bpp_loss"]
+            if self.metric == "ms-ssim":
+                # crop to 128x128
+                # target = target[:,:,64:192,64:192]
+                # output["x_hat"] = output["x_hat"][:,:,64:192,64:192]
+                out["distortion_loss"] = self.mssim(output["x_hat"], target)
+                # out["distortion_loss"] = self.mssim(output["x_hat"], target)
+                # out["distortion_loss"] = self.mssim(torch.clamp(output["x_hat"],min=0., max=1.), target)
+                out["loss"] = self.lmbda * (1 - out["distortion_loss"]) + out["bpp_loss"]
+        return out
 
-  def forward(self, x):
-    grad_x = nn.functional.conv2d(x, self.weight_x, padding=1)
-    grad_y = nn.functional.conv2d(x, self.weight_y, padding=1)
-    gradient = torch.tanh(torch.abs(grad_x) + torch.abs(grad_y))
-    return gradient
-
-def load_data(train_data_dir, train_batch_size):
-    
-    train_transform = transforms.Compose([
-        #transforms.Resize(256),
-        #transforms.RandomResizedCrop(size=112),
-        transforms.ToTensor(),
-    ])
-
+def load_data(train_data_dir, train_batch_size, crop=256):
+    if crop:
+        train_transform = transforms.Compose([
+            #transforms.Resize(256),
+            #transforms.RandomResizedCrop(size=112),
+            transforms.RandomCrop(crop),
+            transforms.ToTensor(),
+        ])
+    else:
+        train_transform = transforms.Compose([transforms.ToTensor()])
+    test_transform = transforms.Compose([transforms.ToTensor()])
+    # if args.adv:
+    #     train_split = "train-tiny"
+    # else:
+    train_split = "train"
+    print(f"Training Dataset: {train_data_dir}/{train_split}")
     train_dataset = datasets.ImageFolder(
         train_data_dir, 
+        split=train_split,
         transform=train_transform
+    )
+    test_dataset = datasets.ImageFolder(
+        train_data_dir, 
+        split="test",
+        transform=test_transform
     )
     def seed_worker(worker_id):
         worker_seed = torch.initial_seed() % 2**32
@@ -67,7 +113,17 @@ def load_data(train_data_dir, train_batch_size):
         worker_init_fn=seed_worker,
         generator=g
     )
-    return train_loader
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, 
+        batch_size=1, 
+        shuffle=False,
+        num_workers=1,
+        drop_last=True,
+        pin_memory=True,
+        worker_init_fn=seed_worker,
+        generator=g
+    )
+    return train_loader, test_loader
 
 def load_multi_data(train_data_dir, attack_data_dir, train_batch_size):
     
@@ -96,124 +152,220 @@ def load_multi_data(train_data_dir, attack_data_dir, train_batch_size):
     )
     return train_loader
 
-def add_noise(x):
-    noise = np.random.uniform(-0.5, 0.5, x.size())
-    noise = torch.Tensor(noise).cuda()
-    return x + noise
+class AverageMeter:
+    """Compute running average."""
 
-def train(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
+    def __init__(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
 
-    TRAINING = True
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+        
+def test_epoch(epoch, test_dataloader, model, criterion, log_dir, args):
+    model.eval()
+    device = next(model.parameters()).device
+
+    loss = AverageMeter()
+    bpp_loss = AverageMeter()
+    mse_loss = AverageMeter()
+    aux_loss = AverageMeter()
+    msim_loss = AverageMeter()
+    if args.adv:
+        vi_loss = AverageMeter()
+
+    for d in test_dataloader:
+        d = d.to(device)
+        if args.adv:
+            noise = args.noise
+            args.noise = 0.0001
+            vi_loss.update(attack_(d, model, args)[-1])
+            args.noise = noise
+        else:
+            with torch.no_grad():
+                out_net = model(d.detach())
+                # out_net["x_hat"] = output_adv
+                out_criterion = criterion(out_net, d, training=False)
+                aux_loss.update(model.aux_loss())
+                bpp_loss.update(out_criterion["bpp_loss"])
+                loss.update(out_criterion["loss"])
+                mse_loss.update(out_criterion["mse_loss"])
+                msim_loss.update(out_criterion["msim_loss"])
+    
+    # TODO: write to log
+    log = f"Test epoch {epoch}: Average losses:\tLoss: {loss.avg:.4f} |\tMSE loss: {mse_loss.avg:.6f} |\tMS-SSIM loss: {msim_loss.avg:.4f} |\tBpp loss: {bpp_loss.avg:.3f}\n"
+    with open(log_dir, "a") as f:
+        f.write(log)
+    
+    if args.adv:
+        print(f"Test Loss (VI): {vi_loss.avg:.4f}")
+        return vi_loss.avg
+    else:
+        print(log)
+        return loss.avg
+
+def save_checkpoint(state, is_best, ckpt_dir, filename="checkpoint.pth.tar"):
+    torch.save(state, filename)
+    if is_best:
+        shutil.copyfile(filename, f"{ckpt_dir}/best_loss.pth.tar")
+
+def train(args):
+    # print("Load Only g_s and g_a parameters")
+    # print("No bpp loss")
     dev_id = "cuda:0"
     C = 3
-    ckpt_index = 0
-    batch_size = 8
-    # print('====> Encoding Image:', im_dir)
-
-    ## model initalization
-    MODEL = args.model
-    quality = args.quality
-    arch_lists = ["factorized", "hyper", "context", "cheng2020", "nlaic", "elic"]
-    assert MODEL in arch_lists, f"'{MODEL}' not in {arch_lists} for param '-m'"
-    if MODEL == "elic":
-        image_comp = model.ImageCompression(256)
-        image_comp.load_state_dict(torch.load(checkpoint_dir), strict=False)
-        image_comp.to(dev_id).eval()
-        print("[ ARCH  ]:", MODEL) 
-
-    if MODEL in ["factorized", "hyper", "context", "cheng2020"]:
-        image_comp = balle.Image_coder(MODEL, quality=quality, metric=args.metric, pretrained=args.download).to(dev_id)
-        print("[ ARCH  ]:", MODEL, quality, args.metric)
-        if args.download == False:
-            print("[ CKPTS ]:", args.ckpt)
-            image_comp.load_state_dict(torch.load(args.ckpt))
-            image_comp.to(dev_id).train()
-        else:
-            print("[ CKPTS ]: Download from CompressAI Model Zoo", )
+    batch_size = args.batch_size
+    lambs = {
+                "mse": [0.0018, 0.0035, 0.0067, 0.0130, 0.0250, 0.0483, 0.0932, 0.1800], 
+                "ms-ssim": [2.40,4.58,8.73,16.64,31.73,60.50,115.37,220.00]
+            }
+    # model initalization
+    image_comp, last_epoch, optimizer, aux_optimizer, lr_scheduler = coder.load_model(args, training=True)
+    # image_comp.cuda()
     # image_comp = nn.DataParallel(image_comp, device_ids=[0])
-    if args.metric == "ms-ssim":
-        loss_func = torch_msssim.MS_SSIM(max_val=1).to(dev_id)
-    if args.metric == "lpips":
-        loss_func = lpips.LPIPS(net='alex').to(dev_id) # best forward scores
 
-    lamb = args.lamb_attack
-    # lr_decay_iters = [70-ckpt_index,80-ckpt_index,90-ckpt_index,95-ckpt_index]
-    lr_decay_iters = [2,4,6]
-    decay_gamma = 0.33
+    print("Lambda:", lambs[args.metric][args.quality-1])
+    print("Learning rate (training):", args.lr_train)
+    print("Learning rate (adversarial):", args.lr_attack)
+    model_dir = f"{args.model}-{args.quality}-{args.metric}"
+    epochs_num = 200
+    if args.adv:
+        epochs_num = 100
+        noise_range = args.noise
+        model_dir += f"-{args.noise}"
+        ckpt_dir = f"./ckpts/adv/{model_dir}"
+    else:
+        ckpt_dir = f"./ckpts/anchor/{model_dir}"
 
-    print("Lambda:", lamb)
-    #Augmentated Model
-    print("Refine with Adversarial examples")
-    model_dir = f"{args.model}-{args.quality}"
-    ckpt_dir = f"./ckpts/attack/{model_dir}/anchor/"
+    if not os.path.exists(ckpt_dir):
+        os.makedirs(ckpt_dir)
+    print("Save ckpts to:", ckpt_dir)
+    # with open(f"{ckpt_dir}/log.txt", "w") as f:
+        # f.write("=========================={model_dir}=======================\n")
+
+    criterion = RateDistortionLoss(metric=args.metric, lmbda=lambs[args.metric][args.quality-1])
+    t = time.time()
+    train_dataloader, test_dataloader = load_data('/workspace/ct/datasets/vimeo', batch_size, crop=256)
+    print(f"Dataloader cost {time.time() - t}s")
+    # train_loader = load_data('/workspace/ct/datasets/datasets/div2k', batch_size)
+    # train_loader = load_multi_data('/workspace/ct/datasets/datasets/div2k', f'/workspace/ct/datasets/attack/{model_dir}/iter-2', batch_size)
     
-    # Anchor
-    # ckpt_dir = args.ckpt
+    best_loss = float("inf")
+    N_ADV = 0
+    print(batch_size - N_ADV, "adv examples in all", batch_size)
 
-    # optimizer 
-    parameters = set(p for n, p in image_comp.named_parameters() if not n.endswith(".quantiles"))
-    aux_parameters = set(p for n, p in image_comp.named_parameters() if n.endswith(".quantiles"))
-    optimizer = torch.optim.Adam(parameters, lr=1e-4)
-    aux_optimizer = torch.optim.Adam(aux_parameters, lr=1e-3)
+    for epoch in range(last_epoch, epochs_num):
+        t = time.time()
+        for step, batch_x in enumerate(train_dataloader):
+            # optimizer.zero_grad()
+            # aux_optimizer.zero_grad()
 
-    # optimizer = torch.optim.Adam(image_comp.parameters(),lr=args.lr_attack)
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, lr_decay_iters, gamma=decay_gamma, last_epoch=-1)
-    
-    for epoch in range(200):    
-        bpp_epoch, loss_epoch = 0., 0.   
-        train_loader = load_data('/workspace/ct/datasets/datasets/div2k', batch_size)
-        # train_loader = load_data(f'/workspace/ct/datasets/attack/{model_dir}/adversarial_5', batch_size)
-        # train_loader = load_multi_data('/workspace/ct/datasets/datasets/div2k', f'/workspace/ct/datasets/attack/{model_dir}/iter-2', batch_size)
-        # train_loader = load_data('/workspace/ct/datasets/attack/hyper-1', batch_size)
-        for step, (batch_x, targets) in enumerate(train_loader):
             batch_x = batch_x.to('cuda')
-            num_pixels = batch_x.size()[0]*batch_x.size()[2]*batch_x.size()[3]
-            output, y_main, y_hyper, p_main, p_hyper = image_comp(batch_x, TRAINING, CONTEXT, POSTPROCESS)
+                        
+            if args.adv:   
+                im_s = batch_x[N_ADV:,:,:,:]
+                batch_x = batch_x.detach()
+                # if step <=100:
+                #     args.noise = noise_range * step/100
+                optimizer.zero_grad()
+                aux_optimizer.zero_grad()
+                batch_adv = attack_(im_s, image_comp, args)[0]
+                batch_adv = batch_adv.detach()
+                
+                # print(torch.mean((batch_adv - im_s)**2))
+                image_comp.train()
+                batch_x[N_ADV:,:,:,:] = batch_adv
+                # coder.write_image(batch_x[N_ADV:N_ADV+1], f"./logs/at_in_{step}.png")
+                
+                for i in range(1): 
+                    result = image_comp(batch_x)
+                    
+                    out_criterion = criterion(result, batch_x)
+                    # save batch_adv as image
+                    coder.write_image(batch_adv[0:], f"{ckpt_dir}/at_in_{i}.png")
+                    coder.write_image(torch.clamp(result["x_hat"][N_ADV:N_ADV+1],min=0.,max=1.), f"{ckpt_dir}/at_out_{step}_{i}.png")
+                    optimizer.zero_grad()
+                    aux_optimizer.zero_grad()
+                    out_criterion["loss"].backward()
+                    torch.nn.utils.clip_grad_norm_(image_comp.parameters(), 1.0)
+                    # torch.nn.utils.clip_grad_value_(image_comp.parameters(), 1.0)
+                    optimizer.step()
+                    # print(i, out_criterion["distortion_loss"].item())
+                    aux_loss = image_comp.aux_loss()
+                    aux_loss.backward()
+                    aux_optimizer.step()
+            else:
+                result = image_comp(batch_x)
+                out_criterion = criterion(result, batch_x)
+                out_criterion["loss"].backward()
+                torch.nn.utils.clip_grad_norm_(image_comp.parameters(), 1.0)
+                optimizer.step()
             
-            # lpips_loss = torch.mean(loss_func(batch_x, output))
-            if args.metric == "ms-ssim":
-                dloss = 1. - loss_func(batch_x, output)
-            if args.metric == "mse":
-                lamb = lamb * 255. * 255.
-                dloss = torch.mean((batch_x - output)**2)
+                aux_loss = image_comp.aux_loss()
+                aux_loss.backward()
+                aux_optimizer.step()
 
-            train_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
-            train_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
-            bpp = train_bpp_main + train_bpp_hyper
-            # loss = dloss + lamb * bpp
-            ## about lambda: https://interdigitalinc.github.io/CompressAI/zoo.html 
-            # [q3 - mse: 0.0067 * 255^2]
-            # [q3 - mssim: 8.73]
-            loss = lamb * dloss + bpp
+            # with torch.no_grad():
+            #     print("Before:", out_criterion["distortion_loss"].item())
+            #     result = image_comp(batch_adv)
+            #     out_criterion = criterion(result, batch_x)
+            #     print("After:", out_criterion["distortion_loss"].item())
 
-            print('step:', step, 'loss:', loss.item(), "distortion:", dloss.item(), 'rate:', bpp.item())
-            optimizer.zero_grad()
-            aux_optimizer.zero_grad()
-
-            loss.backward()
-            optimizer.step()
-
-            aux_loss = image_comp.net.entropy_bottleneck.loss()
-            aux_loss.backward()
-            aux_optimizer.step()
-
-            bpp_epoch += bpp.item()
-            loss_epoch += loss.item()
-            if step % 1000 == 0:
+            if args.adv: 
+                if step%10 == 0 and step > 0:
+                    for i in range(N_ADV, batch_size):
+                        coder.write_image(batch_x[i:i+1], f"./logs/at/in_{step}_{i}.png")
+                        coder.write_image(torch.clamp(result["x_hat"][i:i+1],min=0.,max=1.0), f"./logs/at/out_{step}_{i}.png")
+                    print('step:', step, 'loss:', out_criterion["loss"].item(), "distortion:", out_criterion["distortion_loss"].item(), 'rate:', out_criterion["bpp_loss"].item(), f"lr: {optimizer.param_groups[0]['lr']}", "Epoch Time:", time.time() - t)
+                    loss = test_epoch(epoch, test_dataloader, image_comp, criterion, f"{ckpt_dir}/log.txt", args)
+                    lr_scheduler.step(loss)
+                    is_best = loss < best_loss
+                    print("New Best:", is_best)
+                    best_loss = min(loss, best_loss)
+                    save_checkpoint(
+                    {
+                        "epoch": epoch,
+                        "step": step,
+                        "state_dict": image_comp.state_dict(),
+                        "loss": loss,
+                        "optimizer": optimizer.state_dict(),
+                        "aux_optimizer": aux_optimizer.state_dict(),
+                        "lr_scheduler": lr_scheduler.state_dict(),
+                    },
+                    is_best, ckpt_dir, filename=f"{ckpt_dir}/ckpt-{epoch}-{step}.pth.tar"
+                    )
+                if step == 2000:
+                    return
+            elif step%10000 == 0:
+                print('step:', step, 'loss:', out_criterion["loss"].item(), "distortion:", out_criterion["distortion_loss"].item(), 'rate:', out_criterion["bpp_loss"].item(), f"lr: {optimizer.param_groups[0]['lr']}", "Epoch Time:", time.time() - t)
                 # torch.save(image_comp.module.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.8f_%0.8f.pkl' % (epoch, step, loss_epoch/(step+1), bpp_epoch/(step+1))))
-                torch.save(image_comp.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.8f_%0.8f.pkl' % (epoch, step, loss_epoch/(step+1), bpp_epoch/(step+1))))
-        
-        lr_scheduler.step()
-        # torch.save(image_comp.module.state_dict(), os.path.join(ckpt_dir,'ae_%d_%0.8f_%0.8f.pkl' % (epoch, loss_epoch/(step+1), bpp_epoch/(step+1))))
-        torch.save(image_comp.state_dict(), os.path.join(ckpt_dir,'ae_%d_%0.8f_%0.8f.pkl' % (epoch, loss_epoch/(step+1), bpp_epoch/(step+1))))
+                # torch.save(image_comp.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.4f_%0.8f_%0.8f.pkl' % (epoch, step, bpp_sum/(step+1), dloss_sum/(step+1), loss_sum/(step+1))))
+        print("Epoch Time:", time.time() - t)
+        if not args.adv:
+            loss = test_epoch(epoch, test_dataloader, image_comp, criterion, f"{ckpt_dir}/log.txt", args)
+            lr_scheduler.step(loss)
+
+            is_best = loss < best_loss
+            best_loss = min(loss, best_loss)
+
+            save_checkpoint(
+                    {
+                        "epoch": epoch,
+                        "state_dict": image_comp.state_dict(),
+                        "loss": loss,
+                        "optimizer": optimizer.state_dict(),
+                        "aux_optimizer": aux_optimizer.state_dict(),
+                        "lr_scheduler": lr_scheduler.state_dict(),
+                    },
+                    is_best, ckpt_dir, filename=f"{ckpt_dir}/ckpt-{epoch}.pth.tar"
+                )
 
 if __name__ == "__main__":
     args = coder.config()
-    checkpoint = None
-    if args.model == "nonlocal":
-        checkpoint = glob('./ckpts/%d_%s/ae_%d_*' %(int(args.lamb), args.job, args.ckpt_num))[0]
-        print("[CONTEXT]:", args.context)
-        print("==== Loading Checkpoint:", checkpoint, '====')
-    
-    train(args, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
-    # print(checkpoint, "bpps:%0.4f, psnr:%0.4f" %(bpp, psnr))
+    args = args.parse_args()
+    train(args)
