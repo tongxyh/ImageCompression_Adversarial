@@ -216,6 +216,7 @@ def config():
     parser.add_argument("-p", dest="pad", type=int, default=None, help="padding size")
     parser.add_argument('--log',  dest='log', type=str, default="./logs/log.txt", help="log file")
     parser.add_argument('--debug',dest='debug', action='store_true')
+    parser.add_argument('--no-clamp',dest='clamp', action='store_false')
     parser.add_argument("--defend", action="store_true", help="defend mode")
 
     return parser

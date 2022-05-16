@@ -21,7 +21,7 @@ import coder
 from anchors import balle
 from utils import torch_msssim, ops
 from anchors import model as models
-from anchors.utils import layer_print
+# from anchors.utils import layer_print
 
 
 def entropy(net, y_main, model="hyper"):
@@ -125,7 +125,7 @@ def plot_bar(ax, ax_x, data, labels, save_path, stack=False):
     ax.legend()
     # ax.yticks(list(range(0, int(data[0].max()), 1))) 
     ax.grid(linewidth=0.1, linestyle="--")
-    plt.ylim(ymax=20)
+    plt.ylim(ymax=10)
     plt.tight_layout()
     plt.savefig(f"./logs/{save_path}")
 
@@ -139,6 +139,7 @@ def show_max_bar(data, labels, save_path, sort=True, stack=False):
         # reorder max_1 with the order of sorted max_0
         _, indices = maxs[0].sort(descending=True)
         maxs = [ i[indices] for i in maxs]
+    torch.save(maxs, f"./logs/max_0.pt")
     ax_x = np.arange(0, maxs[0].shape[0], 1)
     # ax.plot(ax_x, maxs[0].detach().cpu().numpy(), label=labels[0], linewidth=0.5)
     plot_bar(ax, ax_x, maxs, labels, save_path, stack)
@@ -219,7 +220,7 @@ def eval(im_adv, im_s, output_s, net, args):
         x_ = net.g_s(torch.round(y_main))
         output_ = torch.clamp(x_, min=0., max=1.0)
     else:
-        if False:
+        if args.clamp:
             output_ = torch.clamp(x_hat, min=0., max=1.0)
         else:
             output_ = x_hat
@@ -260,11 +261,11 @@ def eval(im_adv, im_s, output_s, net, args):
     #                 norm_adv = torch.sqrt(torch.nn.functional.conv2d(temp[0] ** 2, gamma, beta))
     #                 print("GDN norm:", torch.max(norm_ori), torch.max(norm_adv), torch.mean(norm_ori), torch.mean(norm_adv))
     
-    # bpp = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
-    # recalculate bpp
     num_pixels = (im_adv.shape[2]) * (im_adv.shape[3])
-    bpp = torch.log(result["likelihoods"]["y"]).sum() / (-math.log(2) * num_pixels)
-    bpp +=torch.log(result["likelihoods"]["z"]).sum() / (-math.log(2) * num_pixels)
+    bpp = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
+    # recalculate bpp
+    # bpp = torch.log(result["likelihoods"]["y"]).sum() / (-math.log(2) * num_pixels)
+    # bpp +=torch.log(result["likelihoods"]["z"]).sum() / (-math.log(2) * num_pixels)
 
     mse_out = torch.mean((output_ - output_s)**2)
     if mse_in > 1e-20 and mse_out > 1e-20:
@@ -281,6 +282,80 @@ def attack_onestep(im_s, net):
     pass
     # im_adv = im_s + torch.clamp(im_s - im_s_hat, min=0., max=1.0)
     # return im_adv
+
+def attack_fgsm(im_s, net, args):
+    H, W = im_s.shape[2], im_s.shape[3]
+    num_pixels = H * W
+
+    # generate original output
+    with torch.no_grad():
+        net.eval()
+        result = net(im_s)
+        output_s = torch.clamp(result["x_hat"], min=0., max=1.0)
+        bpp_ori = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
+
+    scale = 1.
+    batch_attack = False
+    LOSS_FUNC = args.att_metric
+    noise_range = args.epsilon/255.0
+    noise = torch.zeros(im_s.size())
+    noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
+    optimizer = torch.optim.Adam([noise], lr=args.lr_attack)
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)
+    net.train()
+    for i in range(args.steps):
+        noise_clipped = ops.Up_bound.apply(ops.Low_bound.apply(noise, -noise_range), noise_range)
+        im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
+
+        if batch_attack:
+            loss_i_batch = torch.mean((im_s - im_in) ** 2, (1,2,3))
+            # TODO: add batch attack
+        else:
+            loss_i = torch.mean((im_s - im_in) ** 2)
+            if loss_i > args.noise:
+                loss = loss_i
+                loss_o = torch.Tensor([0.])
+            else:
+                if args.pad:
+                    y_main = net.g_a(F.pad(im_in, padder, mode=args.padding_mode))
+                else:
+                    y_main = net.g_a(im_in)
+                if args.defend:
+                    y_main = defend(y_main, args)
+                x_ = net.g_s(y_main)
+                if args.pad:
+                    x_ = crop(x_, padding)
+                # x_ = self.net(im_in)["x_hat"]
+                if args.clamp:
+                    output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
+                else:
+                    output_ = x_
+
+                if LOSS_FUNC == "L2":
+                    loss_o = 1. - torch.mean((output_s - output_) * (output_s - output_)) # MSE(x_, y_)
+                    # loss_o = 1. - (output_s - output_) ** 2
+                if LOSS_FUNC == "L1":
+                    loss_o = 1.0 - torch.mean(torch.abs(im_s - output_))
+
+                loss = loss_o
+
+        optimizer.zero_grad()
+        loss.backward()                
+        optimizer.step()
+        
+        if i%100 == 0 and args.debug:
+            print(i, "loss_rec", loss_o.item(), "loss_in", loss_i.item(), "VI (mse):", (1.-loss_o.item())/(loss_i.item()+1e-10))
+                
+        if i%(args.steps//3) == 0:
+            lr_scheduler.step()
+            if args.debug:
+                print(im_s.shape, output_s.shape)
+                _, _, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args)    
+                net.train()
+
+    im_adv, output_adv, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args)         
+    return im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi
+
 
 def attack_(im_s, net, args):
     # C = 3
@@ -425,8 +500,10 @@ def attack_(im_s, net, args):
                 if args.pad:
                     x_ = crop(x_, padding)
                 # x_ = self.net(im_in)["x_hat"]
-                # output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
-                output_ = x_
+                if args.clamp:
+                    output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
+                else:
+                    output_ = x_
 
                 # output_[:,:,H:,:] = 0.
                 # output_[:,:,:,W:] = 0.
@@ -510,13 +587,14 @@ class attacker:
         image_dir = "./attack/kodak/"
         filename = image_dir + self.model_config + image_file.split("/")[-1][:-4]
         im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi = attack_(im_s, self.net, args)
+        if self.args.target:
+            print("%s_advin_%s.png"%(filename, self.args.target))
+            coder.write_image(im_adv, "%s_advin_%s.png"%(filename, self.args.target))
         if self.args.debug:
             coder.write_image(im_adv, "%s_advin_%0.8f.png"%(filename, mse_in.item()))
             coder.write_image(output_adv, "%s_advout_%0.8f.png"%(filename, mse_out.item()))
             coder.write_image(torch.clamp(im_adv-im_s + 0.5, min=0., max=1.), "%s_noise_%0.8f.png"%(filename, mse_out.item()))
             self.net.eval()
-            
-            # TODO: visualize fmap distribution
 
             with torch.no_grad():
                 eval(im_adv, im_s, output_s, self.net, self.args)
@@ -562,7 +640,7 @@ def batch_attack(args):
     if args.debug:
         y_main_s = torch.mean(torch.abs(torch.cat(y_main_s, dim=0)), dim=0, keepdim=True)
         y_main_adv = torch.mean(torch.abs(torch.cat(y_main_adv, dim=0)), dim=0, keepdim=True)
-        show_max_bar([y_main_s, y_main_adv], ["nature examples", "adversarial examples"], save_path="activations_kodak.pdf", sort=True)
+        show_max_bar([y_main_s, y_main_adv-y_main_s], ["nature examples", "adversarial examples"], save_path="activations_kodak.pdf", sort=True, stack=True)
 
 def attack_bitrates(args):
     if args.quality > 0:
