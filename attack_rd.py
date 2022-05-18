@@ -282,8 +282,10 @@ def attack_onestep(im_s, net):
     pass
     # im_adv = im_s + torch.clamp(im_s - im_s_hat, min=0., max=1.0)
     # return im_adv
+def attack_cw(im_s, net, args):
+    pass
 
-def attack_fgsm(im_s, net, args):
+def attack_ifgsm(im_s, net, args):
     H, W = im_s.shape[2], im_s.shape[3]
     num_pixels = H * W
 
@@ -462,8 +464,8 @@ def attack_(im_s, net, args):
     batch_attack = False
     LOSS_FUNC = args.att_metric
     noise_range = args.epsilon/255.0
-    # noise = torch.zeros(im_s.size())
-    noise = torch.Tensor(im_s.size()).uniform_(-1e-5,1e-5)
+    noise = torch.zeros(im_s.size())
+    # noise = torch.Tensor(im_s.size()).uniform_(-1e-2,1e-2)
     noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
     optimizer = torch.optim.Adam([noise], lr=args.lr_attack)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)
