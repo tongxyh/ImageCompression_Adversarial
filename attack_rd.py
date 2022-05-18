@@ -272,7 +272,7 @@ def eval(im_adv, im_s, output_s, net, args):
         vi = 10. * math.log10(mse_out/mse_in)
     else:
         vi = None
-        print("[!] Warning: mse_in or mse_out is zero")
+        print(f"[!] Warning: mse_in ({mse_in}) or mse_out {mse_out} is zero")
     if args.debug:
         print("loss_rec:", mse_out.item(), "loss_in:", mse_in.item(), "VI (mse):", vi)
     return im_, output_, bpp, mse_in, mse_out, vi
@@ -298,6 +298,7 @@ def attack_fgsm(im_s, net, args):
     batch_attack = False
     LOSS_FUNC = args.att_metric
     noise_range = args.epsilon/255.0
+    # noise = torch.zeros(im_s.size())
     noise = torch.zeros(im_s.size())
     noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
     optimizer = torch.optim.Adam([noise], lr=args.lr_attack)
@@ -316,15 +317,10 @@ def attack_fgsm(im_s, net, args):
                 loss = loss_i
                 loss_o = torch.Tensor([0.])
             else:
-                if args.pad:
-                    y_main = net.g_a(F.pad(im_in, padder, mode=args.padding_mode))
-                else:
-                    y_main = net.g_a(im_in)
+                y_main = net.g_a(im_in)
                 if args.defend:
                     y_main = defend(y_main, args)
                 x_ = net.g_s(y_main)
-                if args.pad:
-                    x_ = crop(x_, padding)
                 # x_ = self.net(im_in)["x_hat"]
                 if args.clamp:
                     output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
@@ -466,7 +462,8 @@ def attack_(im_s, net, args):
     batch_attack = False
     LOSS_FUNC = args.att_metric
     noise_range = args.epsilon/255.0
-    noise = torch.zeros(im_s.size())
+    # noise = torch.zeros(im_s.size())
+    noise = torch.Tensor(im_s.size()).uniform_(-1e-5,1e-5)
     noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
     optimizer = torch.optim.Adam([noise], lr=args.lr_attack)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)

@@ -1,5 +1,4 @@
 import argparse
-from audioop import avg
 import math
 import os
 import random
@@ -287,8 +286,8 @@ def train(args):
                     
                     out_criterion = criterion(result, batch_x)
                     # save batch_adv as image
-                    coder.write_image(batch_adv[0:], f"{ckpt_dir}/at_in_{i}.png")
-                    coder.write_image(torch.clamp(result["x_hat"][N_ADV:N_ADV+1],min=0.,max=1.), f"{ckpt_dir}/at_out_{step}_{i}.png")
+                    # coder.write_image(batch_adv[0:], f"{ckpt_dir}/at_in_{i}.png")
+                    # coder.write_image(torch.clamp(result["x_hat"][N_ADV:N_ADV+1],min=0.,max=1.), f"{ckpt_dir}/at_out_{step}_{i}.png")
                     optimizer.zero_grad()
                     aux_optimizer.zero_grad()
                     out_criterion["loss"].backward()
