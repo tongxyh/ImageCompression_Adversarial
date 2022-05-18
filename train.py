@@ -269,8 +269,8 @@ def train(args):
             if args.adv:   
                 im_s = batch_x[N_ADV:,:,:,:]
                 batch_x = batch_x.detach()
-                # if step <=100:
-                #     args.noise = noise_range * step/100
+                if step <=100:
+                    args.noise = noise_range * step/100
                 optimizer.zero_grad()
                 aux_optimizer.zero_grad()
                 batch_adv = attack_(im_s, image_comp, args)[0]
