@@ -635,7 +635,7 @@ def batch_attack(args):
         bpp_ += bpp
         vi_ += vi
     bpp_ori, bpp, vi = bpp_ori_/len(images), bpp_/len(images), vi_/len(images)
-    print("AVG:", args.quality, bpp_ori, bpp, vi)
+    print("AVG:", args.quality, bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi)
     if args.debug:
         y_main_s = torch.mean(torch.abs(torch.cat(y_main_s, dim=0)), dim=0, keepdim=True)
         y_main_adv = torch.mean(torch.abs(torch.cat(y_main_adv, dim=0)), dim=0, keepdim=True)

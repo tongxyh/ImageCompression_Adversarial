@@ -203,23 +203,21 @@ def attack(args, model, filepath):
     for i in range(args.steps):  
         noise_clip = torch.clamp(noise, -16/255.0, 16/255.0)
         im_in = torch.clamp(x+noise_clip, min=0., max=1.0)
-        y = model.g_a_func(im_in)
-        
-        # noise or round
-        # half = float(0.5)
-        # uni_noise = torch.empty_like(y).uniform_(-half, half)
-        # y_hat = y + uni_noise
-        y_hat = y
-
-        x_hat = torch.clamp(model.g_s_func(y_hat), min=0., max=1.)
-        
-        # loss
         loss_i = torch.mean(noise_clip**2)
-        loss_o = 1. - torch.mean((x_hat - x_hat_s)**2)
         if loss_i > 0.0001:
             loss = loss_i
+            loss_o = torch.Tensor([0.])
         else:
+            y = model.g_a_func(im_in)
+            # noise or round
+            # half = float(0.5)
+            # uni_noise = torch.empty_like(y).uniform_(-half, half)
+            # y_hat = y + uni_noise
+            y_hat = y
+            x_hat = torch.clamp(model.g_s_func(y_hat), min=0., max=1.)
+            loss_o = 1. - torch.mean((x_hat - x_hat_s)**2)
             loss = loss_o
+
         # optimize
         optimizer.zero_grad()
         loss.backward()
@@ -252,7 +250,7 @@ def attack(args, model, filepath):
                 # print('psnr', rv['psnr'])
                 # print('ms-ssim', rv['ms-ssim'])
                 print(bpp_ori, bpp_adv, (mse_out/mse_in).item(), "[result]")
-                return bpp_ori, bpp_adv, (mse_out/mse_in).item()
+                return bpp_ori.item(), bpp_adv.item(), (mse_out/mse_in).item()
 
 def eval_model(model, filepaths, entropy_estimation=False, half=False, savedir = ""):
     device = next(model.parameters()).device
@@ -285,7 +283,7 @@ def setup_args():
     )
     
     parent_parser.add_argument("-steps", type=int, help="attack steps")
-    parent_parser.add_argument("-lr", type=float, help="attack learning rate")
+    parent_parser.add_argument("-lr", type=float, default=0.01, help="attack learning rate")
 
     # Common options.
     parent_parser.add_argument("dataset", type=str, help="dataset path")
@@ -413,9 +411,9 @@ def main(argv):
             bpp_ori.append(bpp_ori_)
             bpp_adv.append(bpp_adv_)
             vi.append(vi_)
-        bpp_ori = np.mean(bpp_ori)
-        bpp_adv = np.mean(bpp_adv)
-        vi = np.mean(vi)
+        bpp_ori = sum(bpp_ori)/len(bpp_ori)
+        bpp_adv = sum(bpp_adv)/len(bpp_adv)
+        vi = sum(vi)/len(vi)
         print("AVG:", bpp_ori, bpp_adv, vi)
         # for k, v in metrics.items():
         #     results[k].append(v)
