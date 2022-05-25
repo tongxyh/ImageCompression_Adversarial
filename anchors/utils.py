@@ -128,3 +128,19 @@ def deconv(in_channels, out_channels, kernel_size=5, stride=2):
         output_padding=stride - 1,
         padding=kernel_size // 2,
     )
+
+def layer_print(model, x):
+    output = {"enc": [], "gdn_gamma": [], "gdn_beta": [], "dec": []}
+    output["enc"].append(x)
+    gdn_index = [1,3,5]
+    for i, layer in enumerate(model.g_a._modules.values()):
+        x = layer(x)
+        # print("Enc", i, x.shape)
+        output["enc"].append(x)
+    
+    for i, layer in enumerate(model.g_s._modules.values()):
+        x = layer(x)
+        output["dec"].append(x)
+        # print("Dec,", i, x.shape)
+     
+    return output
