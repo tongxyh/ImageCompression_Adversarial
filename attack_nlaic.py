@@ -6,6 +6,7 @@ from glob import glob
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+import math
 import numpy as np
 from PIL import Image
 from thop import profile
@@ -16,31 +17,13 @@ from Model.context_model import Weighted_Gaussian
 from Util import ops
 from datetime import datetime
 
-class Gradient_Net(nn.Module):
-  def __init__(self):
-    super(Gradient_Net, self).__init__()
-    kernel_x = [[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]
-    kernel_x = torch.FloatTensor(kernel_x).unsqueeze(0).unsqueeze(0).cuda() # [n_out, n_in, k_x, k_y]
-
-    kernel_y = [[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]]
-    kernel_y = torch.FloatTensor(kernel_y).unsqueeze(0).unsqueeze(0).cuda()
-
-    self.weight_x = nn.Parameter(data=kernel_x.repeat(1,3,1,1), requires_grad=False)
-    self.weight_y = nn.Parameter(data=kernel_y.repeat(1,3,1,1), requires_grad=False)
-
-  def forward(self, x):
-    grad_x = nn.functional.conv2d(x, self.weight_x, padding=1)
-    grad_y = nn.functional.conv2d(x, self.weight_y, padding=1)
-    gradient = torch.tanh(torch.abs(grad_x) + torch.abs(grad_y))
-    return gradient
-
 
 def add_noise(x):
     noise = np.random.uniform(-0.5, 0.5, x.size())
     noise = torch.Tensor(noise).cuda()
     return x + noise
 
-def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
+def attack(args, image, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     TRAINING = True
     dev_id = "cuda:0"
@@ -90,7 +73,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     #msssim_func = msssim_func.cuda()
 
     # img_s = Image.open(source_dir).resize((16,16))
-    img_s = Image.open(args.source)
+    img_s = Image.open(image)
     # img_s = np.array(img_s)/255.0/5.0+0.5
     img_s = np.array(img_s)/255.0
     filename = args.source.split("/")[-1][:-4]
@@ -152,7 +135,8 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
         ori_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
         ori_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
-        print("Original bpp:", ori_bpp_hyper + ori_bpp_main)
+        bpp_ori = ori_bpp_hyper + ori_bpp_main
+        print("Original bpp:", bpp_ori)
         # print("Original PSNR:", )
         # print("Original MS-SSIM:", )
     
@@ -254,6 +238,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     lr_scheduler.step()
 
                 with torch.no_grad():
+                    mse_in = torch.mean((im_in - im_s)**2)
                     im_uint8 = torch.round(im_in * 255.0)/255.0
                     
                     # 1. NO PADDING
@@ -300,6 +285,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     # original recons
     output_ = torch.clamp(output_s, min=0., max=1.0)
+    mse_out = torch.mean((output_s - output)**2)
     out = output_.data[0].cpu().numpy()
     out = np.round(out * 255.0)
     out = out.astype('uint8')
@@ -307,9 +293,8 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     img = Image.fromarray(out[:H, :W, :])
     img.save("./attack/kodak/origin_out.png")
-
-    return 0, 0
-
+    
+    return bpp_ori, bpp, 10*math.log10(mse_out/mse_in)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -344,28 +329,13 @@ if __name__ == "__main__":
     checkpoint = "Weights/"
     # print("[CONTEXT]:", args.context)
     print("==== Loading Checkpoint:", checkpoint, '====')
-    
-    ## random select in 0
-    # target = "/ct/code/mnist_png/testing/0/294.png"
-    ## random select in [1-9]
-    # source = "/home/tong/mnist_png/testing/9/281.png"
-    # source = "/home/tong/mnist_png/testing/8/110.png"
-    # source = "/home/tong/mnist_png/testing/7/411.png"
-    # source = "/home/tong/mnist_png/testing/6/940.png"
-    # source = "/home/tong/mnist_png/testing/5/509.png"
-    # source = "/home/tong/mnist_png/testing/4/109.png"
-    # source = "/home/tong/mnist_png/testing/3/1426.png"
-    # source = "/ct/code/mnist_png/testing/2/72.png"
-    # source = "/home/tong/mnist_png/testing/1/430.png"
-
-    # target = "/ct/code/LearnedCompression/attack/colorattacker.png"
-    # source = "/ct/code/LearnedCompression/attack/colorchecker.png"
-
-    # target = "/ct/code/LearnedCompression/attack/licenseplate/MZ8723_180x180.png" 
-    # source = "/ct/code/LearnedCompression/attack/licenseplate/MZ2837_180x180.png"
-
-    # target = "/home/tong/LearnedCompression/mnist/tmp/roof_angle.png"
-    # source = "/home/tong/LearnedCompression/mnist/tmp/roof_psnr.png"
-
-    bpp, psnr = attack(args, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
-    # print(checkpoint, "bpps:%0.4f, psnr:%0.4f" %(bpp, psnr))
+    images = sorted(glob(args.source))
+    bpp_ori_, bpp_, vi_ = 0., 0., 0.
+    for image in images:
+        bpp_ori, bpp_adv, vi = attack(args, image, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
+        print(image, bpp_ori, bpp, vi, "Time:", end-start)
+        bpp_ori_ += bpp_ori
+        bpp_ += bpp_adv
+        vi_ += vi
+    bpp_ori, bpp, vi = bpp_ori_/len(images), bpp_/len(images), vi_/len(images)
+    print("AVG:", args.quality, bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi)
