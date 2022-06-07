@@ -25,17 +25,15 @@ from attack_rd import attack_
 class RateDistortionLoss(nn.Module):
     """Custom rate distortion loss with a Lagrangian parameter."""
 
-    def __init__(self, metric="mse", lmbda=1e-2):
+    def __init__(self, metric="mse", lmbda=1e-2, device="cuda:0"):
         super().__init__()
         self.metric = metric
         self.mse = nn.MSELoss()
         self.mssim = MS_SSIM(data_range=1, size_average=True, channel=3)
         self.lmbda = lmbda
         ## about lambda: https://interdigitalinc.github.io/CompressAI/zoo.html 
-        # [q3 - mse: 0.0067 * (255 ^ 2)]
-        # [q3 - mssim: 8.73]
-        # self.lpips = lpips.LPIPS(net='alex').to(self.args.device)
-        # lpips_loss = torch.mean(loss_func(batch_x, output))
+        self.lpips = lpips.LPIPS(net='alex').to(device)
+        # lpips_loss = torch.mean(self.lpips(batch_x, output))
 
     def forward(self, output, target, training=True):
         N, _, H, W = target.size()
@@ -52,6 +50,7 @@ class RateDistortionLoss(nn.Module):
             out["msim_loss"] = self.mssim(output["x_hat"], target)
             out["psnr"] = -10.*math.log10(out["mse_loss"])
             out["msim_dB"] = -10.*math.log10(1.-out["msim_loss"])
+
         else:
             # if args.adv:
             #         out["bpp_loss"] = out["bpp_loss"] * 0.
@@ -66,6 +65,10 @@ class RateDistortionLoss(nn.Module):
                 # out["distortion_loss"] = self.mssim(output["x_hat"], target)
                 # out["distortion_loss"] = self.mssim(torch.clamp(output["x_hat"],min=0., max=1.), target)
                 out["loss"] = self.lmbda * (1 - out["distortion_loss"]) + out["bpp_loss"]
+            if self.metric == "lpips":
+                out["distortion_loss"] = torch.mean(self.lpips(output["x_hat"], target))
+                out["loss"] = self.lmbda * out["distortion_loss"] + out["bpp_loss"]
+                
         return out
 
 def load_data(train_data_dir, train_batch_size, crop=256):
@@ -175,6 +178,7 @@ def test_epoch(epoch, test_dataloader, model, criterion, log_dir, args):
     mse_loss = AverageMeter()
     aux_loss = AverageMeter()
     msim_loss = AverageMeter()
+    d_loss = AverageMeter()
     if args.adv:
         vi_loss = AverageMeter()
 
@@ -189,15 +193,15 @@ def test_epoch(epoch, test_dataloader, model, criterion, log_dir, args):
             with torch.no_grad():
                 out_net = model(d.detach())
                 # out_net["x_hat"] = output_adv
-                out_criterion = criterion(out_net, d, training=False)
+                out_criterion = criterion(out_net, d, training=True)
                 aux_loss.update(model.aux_loss())
                 bpp_loss.update(out_criterion["bpp_loss"])
                 loss.update(out_criterion["loss"])
-                mse_loss.update(out_criterion["mse_loss"])
-                msim_loss.update(out_criterion["msim_loss"])
+                d_loss.update(out_criterion["distortion_loss"])
     
     # TODO: write to log
-    log = f"Test epoch {epoch}: Average losses:\tLoss: {loss.avg:.4f} |\tMSE loss: {mse_loss.avg:.6f} |\tMS-SSIM loss: {msim_loss.avg:.4f} |\tBpp loss: {bpp_loss.avg:.3f}\n"
+    # log = f"Test epoch {epoch}: Average losses:\tLoss: {loss.avg:.4f} |\tMSE loss: {mse_loss.avg:.6f} |\tMS-SSIM loss: {msim_loss.avg:.4f} |\tBpp loss: {bpp_loss.avg:.3f}\n"
+    log = f"Test epoch {epoch}: Average losses:\tLoss: {loss.avg:.4f} |\tMSE loss: {d_loss.avg:.6f} |\tBpp loss: {bpp_loss.avg:.3f}\n"
     with open(log_dir, "a") as f:
         f.write(log)
     
@@ -227,16 +231,19 @@ def train(args):
     image_comp, last_epoch, optimizer, aux_optimizer, lr_scheduler = coder.load_model(args, training=True)
     # image_comp.cuda()
     # image_comp = nn.DataParallel(image_comp, device_ids=[0])
-
-    print("Lambda:", lambs[args.metric][args.quality-1])
+    if args.lamb == None:
+        lamb = lambs[args.metric][args.quality-1]
+    else:
+        lamb = args.lamb
+    print("Lambda:", lamb)
     print("Learning rate (training):", args.lr_train)
     print("Learning rate (adversarial):", args.lr_attack)
-    model_dir = f"{args.model}-{args.quality}-{args.metric}"
+    model_dir = f"{args.model}-{lamb}-{args.metric}"
     epochs_num = 200
     if args.adv:
         epochs_num = 100
         noise_range = args.noise
-        model_dir += f"-{args.noise}"
+        model_dir += f"-{args.noise}-{args.steps}"
         ckpt_dir = f"./ckpts/adv/{model_dir}"
     else:
         ckpt_dir = f"./ckpts/anchor/{model_dir}"
@@ -247,16 +254,21 @@ def train(args):
     # with open(f"{ckpt_dir}/log.txt", "w") as f:
         # f.write("=========================={model_dir}=======================\n")
 
-    criterion = RateDistortionLoss(metric=args.metric, lmbda=lambs[args.metric][args.quality-1])
+    criterion = RateDistortionLoss(metric=args.metric, lmbda=lamb)
+
     t = time.time()
-    train_dataloader, test_dataloader = load_data('/workspace/ct/datasets/vimeo', batch_size, crop=256)
-    print(f"Dataloader cost {time.time() - t}s")
+    train_dataloader, test_dataloader = load_data('/workspace/dataset/vimeo', batch_size, crop=256)
+    print(f"Dataloader cost {time.time() - t}s") 
     # train_loader = load_data('/workspace/ct/datasets/datasets/div2k', batch_size)
     # train_loader = load_multi_data('/workspace/ct/datasets/datasets/div2k', f'/workspace/ct/datasets/attack/{model_dir}/iter-2', batch_size)
     
     best_loss = float("inf")
-    N_ADV = 0
-    print(batch_size - N_ADV, "adv examples in all", batch_size)
+    if args.fintune:
+        epochs_num = 10
+
+    if args.adv:
+        N_ADV = 0
+        print(batch_size - N_ADV, "adv examples in all", batch_size)
 
     for epoch in range(last_epoch, epochs_num):
         t = time.time()
@@ -299,6 +311,7 @@ def train(args):
                     aux_loss.backward()
                     aux_optimizer.step()
             else:
+                image_comp.train()
                 result = image_comp(batch_x)
                 out_criterion = criterion(result, batch_x)
                 out_criterion["loss"].backward()
@@ -317,33 +330,51 @@ def train(args):
 
             if args.adv: 
                 if step%10 == 0 and step > 0:
-                    for i in range(N_ADV, batch_size):
-                        coder.write_image(batch_x[i:i+1], f"./logs/at/in_{step}_{i}.png")
-                        coder.write_image(torch.clamp(result["x_hat"][i:i+1],min=0.,max=1.0), f"./logs/at/out_{step}_{i}.png")
+                    # for i in range(N_ADV, batch_size):
+                        # coder.write_image(batch_x[i:i+1], f"./logs/at/in_{step}_{i}.png")
+                        # coder.write_image(torch.clamp(result["x_hat"][i:i+1],min=0.,max=1.0), f"./logs/at/out_{step}_{i}.png")
                     print('step:', step, 'loss:', out_criterion["loss"].item(), "distortion:", out_criterion["distortion_loss"].item(), 'rate:', out_criterion["bpp_loss"].item(), f"lr: {optimizer.param_groups[0]['lr']}", "Epoch Time:", time.time() - t)
                     loss = test_epoch(epoch, test_dataloader, image_comp, criterion, f"{ckpt_dir}/log.txt", args)
                     lr_scheduler.step(loss)
                     is_best = loss < best_loss
                     print("New Best:", is_best)
                     best_loss = min(loss, best_loss)
-                    save_checkpoint(
-                    {
-                        "epoch": epoch,
-                        "step": step,
-                        "state_dict": image_comp.state_dict(),
-                        "loss": loss,
-                        "optimizer": optimizer.state_dict(),
-                        "aux_optimizer": aux_optimizer.state_dict(),
-                        "lr_scheduler": lr_scheduler.state_dict(),
-                    },
-                    is_best, ckpt_dir, filename=f"{ckpt_dir}/ckpt-{epoch}-{step}.pth.tar"
-                    )
+                    if is_best or step%100 == 0:
+                        save_checkpoint(
+                        {
+                            "epoch": epoch,
+                            "step": step,
+                            "state_dict": image_comp.state_dict(),
+                            "loss": loss,
+                            "optimizer": optimizer.state_dict(),
+                            "aux_optimizer": aux_optimizer.state_dict(),
+                            "lr_scheduler": lr_scheduler.state_dict(),
+                        },
+                        is_best, ckpt_dir, filename=f"{ckpt_dir}/ckpt-{epoch}-{step}.pth.tar"
+                        )
                 if step == 2000:
                     return
             elif step%10000 == 0:
                 print('step:', step, 'loss:', out_criterion["loss"].item(), "distortion:", out_criterion["distortion_loss"].item(), 'rate:', out_criterion["bpp_loss"].item(), f"lr: {optimizer.param_groups[0]['lr']}", "Epoch Time:", time.time() - t)
                 # torch.save(image_comp.module.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.8f_%0.8f.pkl' % (epoch, step, loss_epoch/(step+1), bpp_epoch/(step+1))))
                 # torch.save(image_comp.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.4f_%0.8f_%0.8f.pkl' % (epoch, step, bpp_sum/(step+1), dloss_sum/(step+1), loss_sum/(step+1))))
+                loss = test_epoch(epoch, test_dataloader, image_comp, criterion, f"{ckpt_dir}/log.txt", args)
+                lr_scheduler.step(loss)
+
+                is_best = loss < best_loss
+                best_loss = min(loss, best_loss)
+
+                save_checkpoint(
+                        {
+                            "epoch": epoch,
+                            "state_dict": image_comp.state_dict(),
+                            "loss": loss,
+                            "optimizer": optimizer.state_dict(),
+                            "aux_optimizer": aux_optimizer.state_dict(),
+                            "lr_scheduler": lr_scheduler.state_dict(),
+                        },
+                        is_best, ckpt_dir, filename=f"{ckpt_dir}/ckpt-{epoch}.pth.tar"
+                    )
         print("Epoch Time:", time.time() - t)
         if not args.adv:
             loss = test_epoch(epoch, test_dataloader, image_comp, criterion, f"{ckpt_dir}/log.txt", args)

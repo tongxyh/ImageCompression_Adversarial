@@ -26,13 +26,14 @@ if __name__ == "__main__":
     print("[Evaluate RD]:", args.source)
     
     net = coder.load_model(args, training=False).to(args.device)
-
+    criterion = RateDistortionLoss()
     bpp, psnr, msim, msim_dB = [AverageMeter() for i in range(4)]
     images = glob(args.source)
     for image in images:
         args.source = image
-        result, metrics = coder.code(args, net, args.source, args.target)
-        
+        im_ori = coder.read_image(image)[0].to(args.device)
+        result = coder.code(args, net, image, args.target)
+        metrics = criterion(result, im_ori, training=False)
         if args.debug:
             print(metrics)
         # print(metrics["bpp_loss"], metrics["mse_loss"], metrics["psnr"], metrics["msim_loss"], metrics["msim_dB"])

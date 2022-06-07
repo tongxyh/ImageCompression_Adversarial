@@ -33,7 +33,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     print("[Noise Transfer]:", args.source2, 'to' ,args.source)
-    
+    model_config = f"{args.model}_{args.quality}_{args.metric}_"
     net = coder.load_model(args, training=False).to(args.device)
     # myattacker = attacker(args)
 
@@ -63,14 +63,14 @@ if __name__ == "__main__":
             # if args.debug:
             #     print(metrics)
         # print(metrics["bpp_loss"], metrics["mse_loss"], metrics["psnr"], metrics["msim_loss"], metrics["msim_dB"])
-    torch.save(vis, "transfer.pkl")
-    # vis = torch.load("transfer.pkl")
-    # # plt.show(vis)
-    # fig, ax = plt.subplots()
-    # im = ax.imshow(vis)
-    # for i in range(24):
-    #     for j in range(24):
-    #         text = ax.text(j, i, int(vis[i, j].item()),
-    #                     ha="center", va="center", color="w", fontsize="xx-small")
-    # plt.savefig("transfer.pdf")
-    # print(vis)
+    torch.save(vis, model_config+"transfer.pkl")
+    vis = torch.load(model_config+"transfer.pkl")
+    # plt.show(vis)
+    fig, ax = plt.subplots()
+    im = ax.imshow(vis, vmin=-4, vmax=25)
+    for i in range(24):
+        for j in range(24):
+            text = ax.text(j, i, int(vis[i, j].item()),
+                        ha="center", va="center", color="w", fontsize="xx-small")
+    plt.savefig(model_config+"transfer.pdf")
+    print(vis)

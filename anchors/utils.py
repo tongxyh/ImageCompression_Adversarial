@@ -129,18 +129,38 @@ def deconv(in_channels, out_channels, kernel_size=5, stride=2):
         padding=kernel_size // 2,
     )
 
-def layer_print(model, x):
-    output = {"enc": [], "gdn_gamma": [], "gdn_beta": [], "dec": []}
+def layer_store(model, x):
+    output = {"enc": [], "gdn_gamma": [], "gdn_beta": [], "dec": [], "dec_round": []}
     output["enc"].append(x)
     gdn_index = [1,3,5]
     for i, layer in enumerate(model.g_a._modules.values()):
         x = layer(x)
         # print("Enc", i, x.shape)
         output["enc"].append(x)
-    
+    x_round = torch.round(x)
     for i, layer in enumerate(model.g_s._modules.values()):
         x = layer(x)
         output["dec"].append(x)
         # print("Dec,", i, x.shape)
-     
-    return output
+    x = x_round
+    for i, layer in enumerate(model.g_s._modules.values()):
+        x = layer(x)
+        output["dec_round"].append(x)
+        # print("Dec,", i, x.shape)
+    return x_round, output
+
+def layer_compare(net, im_, im_s):
+    x_round, layerout = layer_store(net, im_)
+    x_s_round, layerout_s = layer_store(net, im_s)
+    # compare
+    print("Encoder:")
+    for layer, layer_s in zip(layerout["enc"], layerout_s["enc"]):
+        mean_error = torch.mean((layer-layer_s)**2).item()
+        print(mean_error*0.5)
+    x_error = torch.mean((x_round-x_s_round)**2)**0.5
+    x_err_s = torch.mean((layer-x_s_round)**2)**0.5
+    print("Quantization:", x_err_s.item(), x_error.item())
+    print("Decoder:")
+    for layer_r, layer, layer_s, layer_s_r, f in zip(layerout["dec_round"], layerout["dec"], layerout_s["dec"], layerout_s["dec_round"], net.g_s._modules.values()):
+        mean_error, error_r = torch.mean((layer-layer_s_r)**2).item(), torch.mean((layer_r-layer_s_r)**2).item()
+        print(mean_error**0.5, error_r**0.5)

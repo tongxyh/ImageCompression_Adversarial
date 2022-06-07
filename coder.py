@@ -153,7 +153,7 @@ def eval_result():
 @torch.no_grad()
 def code(args, net, input_file, out_file=None):
     net.eval()
-    criterion = RateDistortionLoss()
+    # criterion = RateDistortionLoss()
     im, _, _ = read_image(input_file)
     im = im.to(args.device)
     if args.pad:
@@ -171,14 +171,14 @@ def code(args, net, input_file, out_file=None):
     if out_file:
         write_image(torch.clamp(result["x_hat"], min=0.0, max=1.0), out_file)
 
-    return result, criterion(result, im, training=False)
+    return result
 
 def config():
     parser = argparse.ArgumentParser()
     parser.add_argument("-device", type=str, default="cuda:0", help="dev id")
     # Train config
     parser.add_argument("-lr_train",  dest="lr_train",   type=float, default=0.0001,  help="train learning rate")
-    parser.add_argument("-lamb",  dest="lamb",   type=float, default=0.0067,  help="training lambda")
+    parser.add_argument("-lamb",  dest="lamb",   type=float, default=None,  help="training lambda")
     parser.add_argument("--eval", dest="eval", action="store_true", help="evaluation mode")
     parser.add_argument('--adv', action='store_true', help='Adversarial training')
     parser.add_argument('-batch_size', type=int, default=8, help='Batch size')
@@ -218,5 +218,6 @@ def config():
     parser.add_argument('--debug',dest='debug', action='store_true')
     parser.add_argument('--no-clamp',dest='clamp', action='store_false')
     parser.add_argument("--defend", action="store_true", help="defend mode")
+    parser.add_argument("--fintune", action="store_true")
 
     return parser

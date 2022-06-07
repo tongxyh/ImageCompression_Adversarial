@@ -168,43 +168,22 @@ def attack(args, image, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=Non
             noise_clipped = ops.Up_bound.apply(ops.Low_bound.apply(noise, -noise_range), noise_range)
             # im_in = torch.clamp(im_s+noise_clipped, min=0., max=1.0)
             im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
-            if args.target != None:
-                im_in = torch.clamp(im_s+noise, min=0., max=1.0)
+            im_in = torch.clamp(im_s+noise, min=0., max=1.0)
             # print("noised:",im_in)
             # print("source:",im_s)
             # 1. NO PADDING
             im_in[:,:,H:,:] = 0.
             im_in[:,:,:,W:] = 0.
-            
-            output, _, _, _, _ = image_comp(im_in, TRAINING)
 
-            # output_ = torch.clamp(output, min=0., max=1.0)
-            output_ = ops.Up_bound.apply(ops.Low_bound.apply(output, 0.), 1.)
-            if LOSS_FUNC == "L2":
-                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
-                if args.target == None:
-                    # loss_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(y_s, y_)
-                    loss_o = 1. - torch.mean((im_s - output_) * (im_s - output_)) # MSE(x_, y_)
-                else:
-                    # loss_o = torch.mean((output_t - output_) * (output_t - output_)) # MSE(y_t, y_s)
-                    loss_o = torch.mean((im_t - output_) * (im_t - output_)) # MSE(y_t, y_s)
-
-            # L1 loss
-            if LOSS_FUNC == "L1":
-                loss_i = torch.mean(torch.abs(im_s - im_in))
-                if args.target == None:
-                    loss_o = 1.0 - torch.mean(torch.abs(im_s - output_))
-                else:    
-                    loss_o = torch.mean(torch.abs(output_t - output_))
-            
-            if LOSS_FUNC == "masked":
-                loss_i = torch.mean((im_s - im_in) * (im_s - im_in)) * mask_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in)) * mask_bkg
-                loss_o = torch.mean((output_t - output_) * (output_t - output_)) * mask_tar
-
+            loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
             # loss = loss_i + lamb * loss_o
-            if loss_i >= 0.001: # PSNR=30dB
+            if loss_i >= 0.0001: # PSNR=40dB
                 loss = loss_i
             else:
+                output, _, _, _, _ = image_comp(im_in, TRAINING)
+                # output_ = torch.clamp(output, min=0., max=1.0)
+                output_ = ops.Up_bound.apply(ops.Low_bound.apply(output, 0.), 1.)
+                loss_o = 1. - torch.mean((output_s - output_) * (output_s - output_)) # MSE(x_, y_)
                 loss = loss_o
             
             # noise_range = 0.9999*noise_range + 0.0001*50/255
@@ -223,12 +202,6 @@ def attack(args, image, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=Non
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-            if args.log:
-                writer.add_scalar('Loss/mse_all', loss.item(), i)
-                writer.add_scalar('Loss/mse_in', mse_i.item(), i)
-                writer.add_scalar('Loss/mse_out',  mse_o.item(), i)
-                writer.add_scalar('Loss/bpp',  bpp.item(), i)
 
             # if i % (args.steps//30) == 0:
             if i % 1000 == 0:    
@@ -315,9 +288,9 @@ if __name__ == "__main__":
     parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
     
     # attack config
-    parser.add_argument('-steps',dest='steps',      type=int,   default=10001,  help="attack iteration steps")
+    parser.add_argument('-steps',dest='steps',      type=int,   default=1001,  help="attack iteration steps")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
-    parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
+    parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.01,  help="attack learning rate")
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
     parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")
 
@@ -333,9 +306,10 @@ if __name__ == "__main__":
     bpp_ori_, bpp_, vi_ = 0., 0., 0.
     for image in images:
         bpp_ori, bpp_adv, vi = attack(args, image, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
-        print(image, bpp_ori, bpp, vi, "Time:", end-start)
+        print(image, bpp_ori, bpp_adv, vi)
         bpp_ori_ += bpp_ori
         bpp_ += bpp_adv
         vi_ += vi
     bpp_ori, bpp, vi = bpp_ori_/len(images), bpp_/len(images), vi_/len(images)
-    print("AVG:", args.quality, bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi)
+    dbpp = (bpp-bpp_ori)/bpp_ori
+    print("AVG:", args.quality, bpp_ori.item(), bpp.item(), dbpp.item(), vi)
