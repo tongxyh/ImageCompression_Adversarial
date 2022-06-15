@@ -368,6 +368,56 @@ def attack_our(im_s, output_s, im_in, net, args):
         #     loss = torch.mean(loss)
     return loss, loss_i, loss_o
 
+def attack_ifgsm(im_s, net, args):
+    H, W = im_s.shape[2], im_s.shape[3]
+    num_pixels = H * W
+
+    # generate original output
+    with torch.no_grad():
+        net.eval()
+        result = net(im_s)
+        output_s = torch.clamp(result["x_hat"], min=0., max=1.0)
+        bpp_ori = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
+
+    im_adv = im_s.detach().requires_grad_(True)
+    net.train()
+    eps = args.epsilon/255.0
+    for i in range(args.steps):
+        y_main = net.g_a(im_adv)
+        output_ = net.g_s(y_main)
+        loss_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(x_, y_)
+
+        net.zero_grad()
+        if im_adv.grad is not None:
+            im_adv.grad.data.fill_(0)
+        loss_o.backward()
+
+        im_adv.grad.sign_()
+        # grad_l = torch.sign(noise.grad+1e-8)
+        # grad_r = torch.sign(noise.grad-1e-8)
+        # noise.grad = 0.5 * (grad_l + grad_r)
+
+        # print("noise:",torch.mean(noise.grad**2))
+        # print("eps:", eps)
+        im_adv = im_adv + eps/args.steps*im_adv.grad
+        im_adv = torch.where(im_adv > im_s+eps, im_s+eps, im_adv)
+        im_adv = torch.where(im_adv < im_s-eps, im_s-eps, im_adv)
+        im_adv = im_adv.detach().requires_grad_(True)
+        # im_adv = im_in + (eps/args.steps)*noise.grad
+        # im_adv = torch.clamp(im_adv, 0., 1.)
+        loss_i = torch.mean((im_adv - im_s)**2)
+        if i%1 == 0 and args.debug:
+            print(i, "loss_rec", loss_o.item(), "loss_in", loss_i.item(), "VI (mse):", 10*math.log10((1.-loss_o.item())/(loss_i.item()+1e-10)))
+                
+        if i%(args.steps//3) == 0:
+            if args.debug:
+                # print(im_s.shape, output_s.shape)
+                _, _, bpp, mse_in, mse_out, vi = eval(im_adv, im_s, output_s, net, args)    
+                net.train()
+
+    im_adv, output_adv, bpp, mse_in, mse_out, vi = eval(im_adv, im_s, output_s, net, args)         
+    return im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi
+
 def attack_(im_s, net, args):
     # C = 3
     # im_s, H, W = coder.read_image(image_file)
@@ -559,7 +609,8 @@ class attacker:
         # mean_s = torch.mean(torch.abs(y_main_s), dim=(0,2,3))
         image_dir = "./attack/kodak/"
         filename = image_dir + self.model_config + image_file.split("/")[-1][:-4]
-        im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi = attack_(im_s, self.net, args)
+        # im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi = attack_(im_s, self.net, args)
+        im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi = attack_ifgsm(im_s, self.net, args)
         self.noise = im_adv - im_s + 0.5
         if self.args.target:
             print("%s_advin_%s.png"%(filename, self.args.target))
