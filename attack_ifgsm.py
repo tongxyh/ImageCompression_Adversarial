@@ -409,7 +409,7 @@ def attack_ifgsm(im_s, net, args):
         if i%1 == 0 and args.debug:
             print(i, "loss_rec", loss_o.item(), "loss_in", loss_i.item(), "VI (mse):", 10*math.log10((1.-loss_o.item())/(loss_i.item()+1e-10)))
                 
-        if i%(args.steps//3) == 0:
+        if args.steps >=3 and i%(args.steps//3) == 0:
             if args.debug:
                 # print(im_s.shape, output_s.shape)
                 _, _, bpp, mse_in, mse_out, vi = eval(im_adv, im_s, output_s, net, args)    

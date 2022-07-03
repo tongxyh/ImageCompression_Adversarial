@@ -52,7 +52,7 @@ def self_ensemble(net, x):
     # output_ss = rotates(output_s)
     x_set0 = torch.cat(xs[:4], dim=0)
     x_set1 = torch.cat(xs[4:], dim=0) 
-    best_mse, i = 1, 0
+    best_mse, i = float("inf"), 0
 
     result = net(x_set0)
     for x, x_hat in zip(xs[:4], result["x_hat"]):
@@ -122,18 +122,13 @@ def attack_our(im_s, output_s, im_in, net, args):
         # if args.pad:
         #     y_main = net.g_a(F.pad(im_in, padder, mode=args.padding_mode))
         # else:
-        y_main = net.g_a(im_in)
-        
-        # TODO: attack self-ensemble
-        # if args.defend:
-        #     y_main = defend(y_main, args)
+        if args.defend:
+            # TODO: attack self-ensemble
+            best_mse, best_x, x_ = defend(net, im_in)
+        else:
+            y_main = net.g_a(im_in)
+            x_ = net.g_s(y_main)
 
-        # if args.pad:
-        #     y_main = torch.nn.functional.pad(y_main[:,:,padding_y:-padding_y,padding_y:-padding_y], padder_y, mode=args.padding_mode)    
-        x_ = net.g_s(y_main)
-        # if args.pad:
-        #     x_ = crop(x_, padding)
-        # x_ = self.net(im_in)["x_hat"]
         if args.clamp: # default: False
             output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
         else:

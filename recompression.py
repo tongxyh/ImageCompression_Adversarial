@@ -4,6 +4,7 @@ from glob import glob
 import coder
 import time
 import numpy as np
+import math
 import torch
 from pytorch_msssim import ms_ssim
 from utils.metrics import PSNR
@@ -17,7 +18,7 @@ def test(args, repeat_times=10):
     # print(images)
     model = coder.load_model(args, training=False).to(args.device)
     criterion = RateDistortionLoss()
-    bpps, psnrs, sims = [np.zeros((repeat_times, len(images))) for i in range(3)]
+    bpps, psnrs, sims, sims_dB = [np.zeros((repeat_times, len(images))) for i in range(4)]
     for j, source in enumerate(images):
         print("[IMAGE]", source)
         index = source.split("/")[-1][:-4]
@@ -29,6 +30,7 @@ def test(args, repeat_times=10):
             metrics = criterion(result, im_ori, training=False)
             # print(metrics["bpp_loss"].item(), PSNR(torch.clamp(result["x_hat"], min=0, max=1), im_ori).item(), ms_ssim(torch.clamp(result["x_hat"], min=0, max=1), im_ori, data_range=1.0, size_average=True).item(), "Result")
             bpps[i, j], psnrs[i, j], sims[i,j] = metrics["bpp_loss"].item(), PSNR(torch.clamp(result["x_hat"], min=0, max=1), im_ori).item(), ms_ssim(torch.clamp(result["x_hat"], min=0, max=1), im_ori, data_range=1.0, size_average=True).item()
+            sims_dB[i, j] = -10.0*math.log10(1 - sims[i,j])
             # print(bpp.item())
             # if args.download:
             #     # cmd = "python visual.py -m {} -metric {} -q {} -s {} -t {} --download > /dev/null 2>&1".format(args.model, args.metric, args.quality, source, target)
@@ -39,7 +41,7 @@ def test(args, repeat_times=10):
             # os.system(cmd)
             source = target
     for i in range(repeat_times):
-        print(np.mean(bpps, axis=1)[i], np.mean(psnrs, axis=1)[i], np.mean(sims, axis=1)[i])
+        print(np.mean(bpps, axis=1)[i], np.mean(psnrs, axis=1)[i], np.mean(sims, axis=1)[i], np.mean(sims_dB, axis=1)[i])
 
 if __name__ == "__main__":
     args = coder.config().parse_args()

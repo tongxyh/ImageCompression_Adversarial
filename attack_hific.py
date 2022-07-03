@@ -22,6 +22,7 @@ import glob
 import itertools
 import os
 import sys
+import math
 
 import numpy as np
 from PIL import Image
@@ -78,7 +79,61 @@ def gradient_net():
                    filters[:,:,:,1:2],
                    strides=[1, 1, 1, 1],
                    padding='SAME')              
-    return tf.math.tanh(tf.abs(ans_x) + tf.abs(ans_y))               
+    return tf.math.tanh(tf.abs(ans_x) + tf.abs(ans_y))   
+def instantiate_model_signature(model, signature, inputs=None, outputs=None):
+  """Imports a trained model and returns one of its signatures as a function."""
+  with tf.io.gfile.GFile(model, "rb") as f:
+    string = f.read()
+  metagraph = tf.compat.v1.MetaGraphDef()
+  metagraph.ParseFromString(string)
+  wrapped_import = tf.compat.v1.wrap_function(
+      lambda: tf.compat.v1.train.import_meta_graph(metagraph), [])
+  graph = wrapped_import.graph
+  if inputs is None:
+    inputs = metagraph.signature_def[signature].inputs
+    inputs = [graph.as_graph_element(inputs[k].name) for k in sorted(inputs)]
+
+  if outputs is None:
+    outputs = metagraph.signature_def[signature].outputs
+    outputs = [graph.as_graph_element(outputs[k].name) for k in sorted(outputs)]
+  else:
+    outputs = [graph.as_graph_element(t) for t in outputs]
+  return wrapped_import.prune(inputs, outputs)
+
+def eval(args, config_name, ckpt_dir, images_glob):
+  config = configs.get_config(config_name)
+  # hific = model.HiFiC(config, helpers.ModelMode.ATTACK)
+  lamb = args.lamb_attack
+  # filename = "/ct/datasets/kodak/kodim19.png"
+  filename = images_glob
+  image_name = images_glob.split("/")[-1][:-4]
+
+  print(f"[Input] {filename}")
+  input_image = read_png(filename)
+  hific = model.HiFiC(config, helpers.ModelMode.EVALUATION)
+  output_image_s, bitstring = hific.build_model(input_image)
+  with tf.Session() as sess:
+      shape = sess.run(tf.shape(input_image))
+      # hific.restore_trained_model(sess, ckpt_dir)
+      with tf.io.gfile.GFile(ckpt_dir, "rb") as f:
+        string = f.read()
+      metagraph = tf.MetaGraphDef()
+      metagraph.ParseFromString(string)
+      # saver = tf.train.Saver()
+      # latest_ckpt = tf.train.load_checkpoint(ckpt_dir)
+      tf.train.import_meta_graph(metagraph)
+      tf.logging.info("Restoring %s...", ckpt_dir)
+      # saver.restore(sess, latest_ckpt)
+      # sess.run(tf.variables_initializer(tf.global_variables()))
+      hific.prepare_for_arithmetic_coding(sess)
+      im_s, output_s, bitstring_np = sess.run([input_image, output_image_s, bitstring])
+  
+  _, h, w, c = output_s.shape
+  print(output_s.shape)
+  assert c == 3 
+  bpp = get_arithmetic_coding_bpp(
+      bitstring, bitstring_np, num_pixels=h * w)
+  return im_s, output_s, shape, bpp
 
 def attack_trained_model(args,
                        config_name,
@@ -89,8 +144,10 @@ def attack_trained_model(args,
                        max_images=None,
                        ):
   """Attack a trained model."""
+  im_s , output_s, shape, bpp_ori = eval(args, config_name, ckpt_dir, images_glob)
+  tf.reset_default_graph()
   config = configs.get_config(config_name)
-  hific = model.HiFiC(config, helpers.ModelMode.ATTACK)
+  # hific = model.HiFiC(config, helpers.ModelMode.ATTACK)
 
   lamb = args.lamb_attack
   # filename = "/ct/datasets/kodak/kodim19.png"
@@ -99,13 +156,12 @@ def attack_trained_model(args,
 
   print(f"[Input] {filename}")
   input_image = read_png(filename)
-  with tf.Session() as sess:
-      shape = sess.run(tf.shape(input_image))
-
+  # output_s_ = tf.convert_to_tensor(output_s)
   # noise = tf.random.normal(shape, mean=0, stddev=1)/10.0
   # with tf.Session() as sess:
   #     noise_ = sess.run(noise)
   print(shape)
+  hific = model.HiFiC(config, helpers.ModelMode.ATTACK)
   # noise_ = np.random.randn(shape[0],shape[1],shape[2],shape[3]).astype(np.float32)*(255.0/10.0)
   noise_ = np.zeros((shape[0],shape[1],shape[2],shape[3])).astype(np.float32)
   with tf.name_scope("attacker") as scope:
@@ -113,9 +169,9 @@ def attack_trained_model(args,
     # mask = tf.Variable(tf.ones_like(noise), name="mask")
     # noise_clipped = tf.clip_by_value(noise*mask, -50, 50.)
   print("[ATTACK] CLIP input to 0-255")
-  input_attack = tf.clip_by_value(tf.math.add(input_image,noise), 0, 255.)
+  input_attack = tf.clip_by_value(tf.math.add(im_s,noise), 0, 255.)
   output_image, bitstring = hific.build_model(input_attack)
-  mse_in = tf.math.reduce_mean(tf.square(input_attack - input_image))
+  mse_in = tf.math.reduce_mean(tf.square(input_attack - im_s))
 
   writer = tf.summary.FileWriter("/ct/code/compression/models/tf_logs")
 
@@ -123,12 +179,12 @@ def attack_trained_model(args,
   with tf.name_scope("attacker_opt") as scope:
     # update_mask = tf.assign(mask, tf.math.tanh(tf.square(output_image-input_image) / (tf.square(noise)+0.0001)))
     loss_i = tf.math.reduce_mean(tf.square(noise))
-    loss_o = tf.math.reduce_mean(tf.square(output_image-input_image))
+    loss_o = tf.math.reduce_mean(tf.square(output_image-output_s))
     
     # cost = loss_i + lamb * (255*255-loss_o)
     @tf.function
     def loss_func(loss_a, loss_b):
-      if loss_a > 0.001 * 255.*255.:
+      if loss_a > 0.0001 * 255.*255.: # epsilon = 1e-4
         return loss_a
       else:
         return 255*255. - loss_b
@@ -154,12 +210,24 @@ def attack_trained_model(args,
   with tf.Session() as sess:  
     
     # hific.restore_trained_model(sess, ckpt_dir) 
-    sess.run(tf.variables_initializer(tf.global_variables()))
-    variables = tf.global_variables()
-    variables_to_restore = [v for v in variables if v.name.split('/')[0] not in ['attacker', 'attacker_opt']]
-    saver = tf.train.Saver(variables_to_restore)
-    latest_ckpt = tf.train.latest_checkpoint(ckpt_dir)
-    saver.restore(sess, latest_ckpt)
+    # sess.run(tf.variables_initializer(tf.global_variables()))
+    # variables = tf.global_variables()
+    # variables_to_restore = [v for v in variables if v.name.split('/')[0] not in ['attacker', 'attacker_opt']]
+    # saver = tf.train.Saver(variables_to_restore)
+    # # latest_ckpt = tf.train.latest_checkpoint(ckpt_dir)
+    # latest_ckpt = tf.train.load_checkpoint(ckpt_dir)
+    # saver.restore(sess, latest_ckpt)
+
+    with tf.io.gfile.GFile(ckpt_dir, "rb") as f:
+      string = f.read()
+      metagraph = tf.MetaGraphDef()
+      metagraph.ParseFromString(string)
+      # saver = tf.train.Saver()
+      # latest_ckpt = tf.train.load_checkpoint(ckpt_dir)
+      tf.train.import_meta_graph(metagraph)
+      tf.logging.info("Restoring %s...", ckpt_dir)
+      # saver.restore(sess, latest_ckpt)
+      sess.run(tf.variables_initializer(tf.global_variables()))
 
     hific.prepare_for_arithmetic_coding(sess)
     steps = args.steps
@@ -169,15 +237,14 @@ def attack_trained_model(args,
       try:
         opt_v, inp_np, otp_np, mse_in_np, ls_in, ls_out, loss, bitstring_np, step_v, lr = \
           sess.run([optimizer, input_image, output_image, mse_in, loss_i, loss_o, cost, bitstring, global_step, learning_rate])
-        if i % 1000 == 0:
-          print(f"step: {step_v},\tLoss_all: {loss:.4f}, Loss_in: {mse_in_np:.4f}, Loss_out: {ls_out:.4f}, lr={lr:.4f}")
-        
-        # print(noise_v.min(), noise_v.max())  
-        
+
         h, w, c = otp_np.shape
         assert c == 3
         bpp = get_arithmetic_coding_bpp(
             bitstring, bitstring_np, num_pixels=h * w)
+
+        if i % 1000 == 0:
+          print(f"step: {step_v},\tLoss_all: {loss:.4f}, Loss_in: {mse_in_np:.4f}, Loss_out: {ls_out:.4f}, lr={lr:.4f}, dPSNR: {10*math.log10(ls_out/mse_in_np):.4f}", bpp_ori, bpp)
 
         # metrics = {'psnr': get_psnr(inp_np, otp_np),
         #            'bpp_real': bpp}
@@ -244,8 +311,8 @@ def parse_args(argv):
 
   parser.add_argument('--images_glob', help='If given, use TODO')
   parser.add_argument("-la", dest="lamb_attack",type=float, default=0.2,  help="attack lambda")
-  parser.add_argument("-lr",  dest="lr_attack", type=float, default=0.001,help="attack learning rate")
-  parser.add_argument("-steps",  dest="steps",   type=int,   default=10001,help="attack learning rate")
+  parser.add_argument("-lr",  dest="lr_attack", type=float, default=0.01,help="attack learning rate")
+  parser.add_argument("-steps",  dest="steps",   type=int,   default=1001,help="attack learning rate")
   helpers.add_tfds_arguments(parser)
 
   args = parser.parse_args(argv[1:])
@@ -253,9 +320,12 @@ def parse_args(argv):
 
 
 def main(args):
-  attack_trained_model(args, args.config, args.ckpt_dir, args.out_dir,
-                     args.images_glob,
-                     helpers.parse_tfds_arguments(args))
+  images = sorted(glob.glob(args.images_glob))
+  for image in images:
+    attack_trained_model(args, args.config, args.ckpt_dir, args.out_dir,
+                      image,
+                      helpers.parse_tfds_arguments(args))
+    tf.reset_default_graph()
 
 
 if __name__ == '__main__':
