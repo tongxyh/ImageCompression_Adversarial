@@ -54,9 +54,13 @@ class RateDistortionLoss(nn.Module):
         else:
             # if args.adv:
             #         out["bpp_loss"] = out["bpp_loss"] * 0.
+            lamb_r = 1
+            if self.lmbda == 100 or 1:
+                # print("[WARNING] Inf Mode")
+                lamb_r = 0
             if self.metric == "mse":
                 out["distortion_loss"] = self.mse(output["x_hat"], target)
-                out["loss"] = self.lmbda * 255 ** 2 * out["distortion_loss"] + out["bpp_loss"]
+                out["loss"] = self.lmbda * 255 ** 2 * out["distortion_loss"] + lamb_r * out["bpp_loss"]
             if self.metric == "ms-ssim":
                 # crop to 128x128
                 # target = target[:,:,64:192,64:192]
@@ -64,7 +68,7 @@ class RateDistortionLoss(nn.Module):
                 out["distortion_loss"] = self.mssim(output["x_hat"], target)
                 # out["distortion_loss"] = self.mssim(output["x_hat"], target)
                 # out["distortion_loss"] = self.mssim(torch.clamp(output["x_hat"],min=0., max=1.), target)
-                out["loss"] = self.lmbda * (1 - out["distortion_loss"]) + out["bpp_loss"]
+                out["loss"] = self.lmbda * (1 - out["distortion_loss"]) + lamb_r * out["bpp_loss"]
             if self.metric == "lpips":
                 out["distortion_loss"] = torch.mean(self.lpips(output["x_hat"], target))
                 out["loss"] = self.lmbda * out["distortion_loss"] + out["bpp_loss"]
@@ -238,7 +242,8 @@ def train(args):
     print("Lambda:", lamb)
     print("Learning rate (training):", args.lr_train)
     print("Learning rate (adversarial):", args.lr_attack)
-    model_dir = f"{args.model}-{lamb}-{args.metric}"
+    # model_dir = f"{args.model}-{lamb}-{args.metric}"
+    model_dir = f"{args.model}-Inf-{args.metric}"
     epochs_num = 200
     if args.adv:
         epochs_num = 100
