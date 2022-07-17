@@ -34,7 +34,7 @@ if __name__ == "__main__":
     index_max_, index_min_, index_abs_max_ = [], [], []
     for i, image in enumerate(images):
         print(i)
-        if i > 1000:
+        if i > 10000:
             break
         args.source = image
         index_max, index_min, index_abs_max = test(args, net, crop=None)
@@ -59,10 +59,17 @@ if __name__ == "__main__":
     index_min_std = torch.std(index_min_, dim=0, keepdim=True)
 
     # boundry value over all images
-    channel_max = torch.amax(index_max_, dim=0)[:,0,0] 
-    channel_min = torch.amin(index_min_, dim=0)[:,0,0] # [C]
+    # channel_max = torch.amax(index_max_, dim=0)[:,0,0] 
+    # channel_min = torch.amin(index_min_, dim=0)[:,0,0] # [C]
+    # print(channel_max.size())
+    channel_max = index_max_.topk(k=100, dim=0)[0][-1,:,0,0]
+    channel_min = index_min_.topk(k=100, dim=0, largest=False)[0][-1,:,0,0]
+    # print(channel_max.size())
     print(channel_max, channel_min)
-    torch.save([channel_max, channel_min], "./attack/data/range.pt")
+    profile = f'{args.model}-{args.metric}-{args.quality}'
+    if args.adv:
+        profile += '-adv'
+    torch.save([channel_max, channel_min], f"./attack/data/{profile}_range.pt")
 
     # print index of index_max where index_max_ is smaller than thres
     # dead_channels = []
@@ -93,7 +100,4 @@ if __name__ == "__main__":
     # # print(index_max_std[0,:10,0,0].cpu().numpy(), index_min_std[0,:10,0,0].cpu().numpy())
     # # update max and min in index_max
     # # torch.save([index_max_mean+2*index_max_std, index_min_mean-2*index_min_std], f'{args.model}-{args.metric}-{args.quality}.pt')
-    # profile = f'{args.model}-{args.metric}-{args.quality}'
-    # if args.adv:
-    #     profile += '-adv'
     # torch.save({"dead":dead_channels, "rank": [ranks_max, ranks_min]}, f'{profile}.pt')

@@ -52,7 +52,8 @@ def plot_distrib_(ax, y_hat, y_hat_t, y_pred, y_pred_t, label, idx):
     # plt.savefig(f"./logs/distrib/image_adv_channel-{label}.pdf")
     # plt.close()
 
-def plot_distrib(ax, y_hat, y_pred, label=None, title=None):
+def plot_distrib(ax, y_hat, y_pred, label=None, title=None, x_title=None):
+    fontsize = 16
     x = np.linspace(v_min+0.5, v_max-0.5, bins)
     x_pred_fine = np.linspace(v_min+0.5, v_max-0.5, 50*bins)
 
@@ -60,13 +61,17 @@ def plot_distrib(ax, y_hat, y_pred, label=None, title=None):
     y_pred = y_pred.cpu().numpy()
     ax.bar(x, y_hat_hist, label="gt")
     ax.plot(x_pred_fine, y_pred, label=f"pred", color="black")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=fontsize)
     # ax.tight_layout()
     ax.set_ylim(ymax=0.1)
-    ax.xaxis.set_label_position('top')
-    ax.set_xlabel(title)
-    if label:
-        ax.set_title(f"channel-{label}", loc="left", x=0.02, y=1, pad=-14)
+    # ax.xaxis.set_label_position('top')
+    if x_title:
+        ax.set_xlabel(x_title, fontsize=fontsize)
+    if title:
+        ax.set_title(title, fontsize=fontsize)
+    # ax.set_title(f"channel-{label}", loc="left", x=0.02, y=1, pad=-20)
+    ax.text(0.03, 0.95, f"channel-{label}", fontsize=fontsize, ha='left', va='top', transform=ax.transAxes)
+        
     ax.set_xticks(np.arange(min(x)+1, max(x), 2.0))
     # ax.autoscale(tight=True)
 
@@ -169,34 +174,36 @@ if __name__ == "__main__":
     #             "err": err,
     #             "y_pred": y_pred,
     #             "y_pred_t": y_pred_t}, f"./logs/distrib/distrib_channel_{label_subfigs = fig.subfigures(1, 2, wspace=0.07)}.pth")
-    # plot 4x5 images
-    num_plots = 5
-    # fig = plt.figure(figsize=(20,8))
-    fig, axs = plt.subplots(4,5,figsize=(16, 8), constrained_layout=True)
     
+    # plot 2*num_plot images
+    num_plots = 3
+    # fig = plt.figure(figsize=(20,8))
+    fig, axs = plt.subplots(2,num_plots,figsize=(4*num_plots, 5), constrained_layout=True, sharex=True, sharey=True)
+    axs[0,0].set_ylabel(r"$\it{p}$ (nature image)", fontsize=16)
+    axs[1,0].set_ylabel(r"$\it{p}$ (adv example)", fontsize=16)
     # subfigs = fig.subfigures(2, 1)
     if args.iter_x > 0:
         idx = args.iter_x
         print(idx, err[idx])
         plot_distrib(y_hat_hist[idx]/pixels, y_hat_t_hist[idx]/pixels, y_pred_base_ori_fine[idx], y_pred_base_adv_fine[idx], f"{idx}", "")
-    else:    
-        # print(subfigs_0.size)
+    else:
         # subfigs[0].supylabel("Baseline")
         # subfigs[1].supylabel("AT")
         for i in range(num_plots):
             idx = channel_index[i]
             print(idx, err[idx])
-            # plot_distrib(ax, y_hat_hist[idx]/pixels, y_hat_t_hist[idx]/pixels, y_pred_base_ori_fine[idx], y_pred_base_adv_fine[idx], f"{idx}", i+1)
-            plot_distrib(axs[0,i], y_hat_hist[idx]/pixels, y_pred_base_ori_fine[idx], f"{idx}", "Baseline (nature image)")
-            plot_distrib(axs[1,i], y_hat_t_hist[idx]/pixels, y_pred_base_adv_fine[idx], f"{idx}", "Baseline (adversarial image)")
-            y_at_ori_hist = torch.histc(y_at_ori[idx], bins=bins, min=v_min, max=v_max)
-            y_at_adv_hist = torch.histc(y_at_adv[idx], bins=bins, min=v_min, max=v_max)
-            plot_distrib(axs[2,i], y_at_ori_hist/pixels, y_pred_at_ori_fine[idx], f"{idx}", "AT (nature image)")
-            plot_distrib(axs[3,i], y_at_adv_hist/pixels, y_pred_at_adv_fine[idx], f"{idx}", "AT (adversarial image)")
-
+            if not args.adv:
+                # plot_distrib(ax, y_hat_hist[idx]/pixels, y_hat_t_hist[idx]/pixels, y_pred_base_ori_fine[idx], y_pred_base_adv_fine[idx], f"{idx}", i+1)
+                plot_distrib(axs[0,i], y_hat_hist[idx]/pixels, y_pred_base_ori_fine[idx], f"{idx}")
+                plot_distrib(axs[1,i], y_hat_t_hist[idx]/pixels, y_pred_base_adv_fine[idx], f"{idx}", x_title="latent activation")
+                plt.savefig("./logs/bitrate_baseline.pdf")
+            else:
+                y_at_ori_hist = torch.histc(y_at_ori[idx], bins=bins, min=v_min, max=v_max)
+                y_at_adv_hist = torch.histc(y_at_adv[idx], bins=bins, min=v_min, max=v_max)
+                plot_distrib(axs[0,i], y_at_ori_hist/pixels, y_pred_at_ori_fine[idx], f"{idx}")
+                plot_distrib(axs[1,i], y_at_adv_hist/pixels, y_pred_at_adv_fine[idx], f"{idx}", x_title="latent activation")
+                plt.savefig("./logs/bitrate_at.pdf")
     #     figs_baseline = subfigs[0].subfigures(2, 1)
-        
-        
     #     ax_baseline = figs_baseline[0].subplots(1, num_plots)
     #     for i, ax in enumerate(ax_baseline):
     #         idx = channel_index[i]
@@ -242,7 +249,6 @@ if __name__ == "__main__":
     # plt.tight_layout(rect=[0, 0.1, 1, 0.98])
     # plt.tight_layout()
     # plt.subplots_adjust(top=0.8)
-    plt.savefig("./logs/bitrate.pdf")
     # parser = coder.config()
     # args = parser.parse_args()
     # images = glob(args.source)
@@ -290,5 +296,4 @@ if __name__ == "__main__":
     # #     print(hist_all[i])
     # np.save("distrib_ori", hist_ori)
     # np.save("distrib_adv", hist_adv)
-
     # python visual_distribution.py -s /workspace/ct/datasets/kodak/kodim03.png -t ./attack/kodak/hyper_5_ms-ssim_kodim03_advin_baseline.png -t2 ./attack/kodak/hyper_5_ms-ssim_kodim03_advin_at.png -q 5

@@ -136,33 +136,70 @@ def plot_bar(ax, ax_x, data, labels, save_path, stack=False):
     colors = ["g", "r", "b"]
     if stack:
         locs = [0 for i in range(len(data))]
-        width = 0.8
+        width = 0.8    
     for i in range(len(data)):
         if i > 0 and stack:
-            ax.bar(ax_x+locs[i], data[i].detach().cpu().numpy(), width=width, bottom = data[i-1].detach().cpu().numpy(), color=colors[i%3], label=labels[i])
+            # ax.bar(ax_x+locs[i], data[i].detach().cpu().numpy(), width=width, bottom = data[i-1].detach().cpu().numpy(), color=colors[i%3], label=labels[i])
+            ax.plot(ax_x, data[i], label=labels[i])
         else:
-            ax.bar(ax_x+locs[i], data[i].detach().cpu().numpy(), width=width, color=colors[i%3], label=labels[i])
+            ax.plot(ax_x, data[i], label=labels[i])
+            # ax.bar(ax_x+locs[i], data[i].detach().cpu().numpy(), width=width, color=colors[i%3], label=labels[i])
     ax.legend(prop={'size': 14})
     # ax.yticks(list(range(0, int(data[0].max()), 1))) 
     ax.grid(linewidth=0.1, linestyle="--")
-    plt.ylim(ymax=10)
+    plt.ylim(ymin=0, ymax=40)
     plt.tight_layout()
     plt.savefig(f"./logs/{save_path}")
 
-def show_max_bar(data, labels, save_path, sort=True, stack=False):
+def show_max_bar(data, labels, save_path, sort=True, stack=False, vi=None):
     fig, ax = plt.subplots()
-    maxs = [torch.amax(torch.abs(i), dim=(0,2,3)) for i in data]
+    # maxs = [torch.amax(torch.abs(i), dim=(0,2,3)) for i in data]
+    maxs = [torch.amax(i, dim=(0,2,3)) for i in data]
+    mins = [torch.amin(i, dim=(0,2,3)) for i in data]
+
+    ax_x = np.arange(0, maxs[0].shape[0], 1)
     # maxs = [torch.mean(torch.clamp(i, min=0), dim=(0,2,3)) for i in data]
     # maxs[0] = torch.mean(torch.clamp(data[0], min=0), dim=(0,2,3))
     # maxs[1] = torch.mean(torch.clamp(data[1], min=0), dim=(0,2,3))
+
+    # fill between
+    if args.adv:
+        profile = f"{args.model}-{args.metric}-{args.quality}-adv"
+    else:
+        profile = f"{args.model}-{args.metric}-{args.quality}"
+    channel_max, channel_min = torch.load(f"./attack/data/{profile}_range.pt")
+
     if sort:
         # reorder max_1 with the order of sorted max_0
         _, indices = maxs[0].sort(descending=True)
         maxs = [ i[indices] for i in maxs]
-    torch.save(maxs, f"./logs/max_0.pt")
-    ax_x = np.arange(0, maxs[0].shape[0], 1)
-    # ax.plot(ax_x, maxs[0].detach().cpu().numpy(), label=labels[0], linewidth=0.5)
-    plot_bar(ax, ax_x, maxs, labels, save_path, stack)
+        mins = [ i[indices] for i in mins]
+        
+        channel_max, channel_min = channel_max[indices], channel_min[indices]
+        # ax.fill_between(ax_x, channel_min.cpu(), channel_max.cpu(), alpha=.5, linewidth=0)
+        ax.fill_between(ax_x, channel_min.cpu(), channel_max.cpu(), alpha=.25, linewidth=0.5, label="safe zone")
+    # for max_v, min_v, label_v in zip(maxs, mins, labels):
+    #     ax.fill_between(ax_x, min_v.detach().cpu(), max_v.detach().cpu(), alpha=.5, linewidth=0, label=label_v)
+    # ax.fill_between(ax_x, mins[0].detach().cpu(), maxs[0].detach().cpu(), alpha=0.4, linewidth=1, label=labels[0], color='g')
+    ax.plot(ax_x, mins[0].detach().cpu(), linewidth=1, label=labels[0], color='g')
+    ax.plot(ax_x, maxs[0].detach().cpu(), linewidth=1, color='g')
+
+    # ax.fill_between(ax_x, mins[1].detach().cpu(), maxs[1].detach().cpu(), alpha=0.4, linewidth=1, label=labels[1], color='r')
+    ax.plot(ax_x, mins[1].detach().cpu(), linewidth=1, label=labels[1], color='r')
+    ax.plot(ax_x, maxs[1].detach().cpu(), linewidth=1, color='r')    
+    
+    ax.legend(prop={'size': 14})
+    ax.grid(linewidth=0.1, linestyle="--")
+    ax.text(0.95, 0.05, f"$\Delta$PSNR={vi:0.2f}", fontsize=20, ha='right', va='bottom', transform=ax.transAxes)
+
+    ax.set_xlabel("channel index", fontsize=14)
+    ax.set_ylabel("activation magnitude", fontsize=14)
+    plt.ylim(ymin=-25, ymax=25)
+    plt.tight_layout()
+    plt.savefig(f"./logs/{save_path}")
+
+    # ax.plot(ax_x, maxs[0[].detach().cpu().numpy(), label=labels[0], linewidth=0.5)
+    # plot_bar(ax, ax_x, maxs, labels, save_path, stack)
 
 def clip_dead_channel(y_main, profile):
     dead_channels = torch.load(profile)["dead"]
@@ -300,29 +337,6 @@ def attack_onestep(im_s, net):
     pass
     # im_adv = im_s + torch.clamp(im_s - im_s_hat, min=0., max=1.0)
     # return im_adv
-def attack_cw(im_s, output_s, im_in, net, args):
-    c = args.lamb_attack
-    loss_i = torch.mean((im_s - im_in) ** 2)
-
-    y_main = net.g_a(im_in)  
-    x_ = net.g_s(y_main)
-    if args.clamp: # default: False
-        output_ = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
-    else:
-        output_ = x_
-    
-    loss_o = 1. - torch.mean((output_s - output_) * (output_s - output_)) # MSE(x_, y_)
-    if loss_o < 1 - args.noise:
-    # if loss_i > args.noise:
-        c1 = 1
-        c = 0.
-    else:
-        c1 = 0.
-        c = 1.
-
-    loss = c1 * loss_i + c * loss_o
-
-    return loss, loss_i, loss_o
 
 def attack_our(im_s, output_s, im_in, net, args):
     loss_i = torch.mean((im_s - im_in) ** 2)
@@ -476,6 +490,7 @@ def attack_(im_s, net, args):
     batch_attack = False
     # LOSS_FUNC = args.att_metric
     noise_range = args.epsilon/255.0
+    epsilon = args.noise
     noise = torch.zeros(im_s.size())
     # noise = torch.Tensor(im_s.size()).uniform_(-1e-2,1e-2)
     noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
@@ -489,14 +504,17 @@ def attack_(im_s, net, args):
             # noise_clipped = torch.nn.functional.pad(noise_clipped, (args.pad,args.pad, args.pad, args.pad), mode='constant', value=0)
         im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
 
-        # im_in[:,:,H:,:] = 0.
-        # im_in[:,:,:,W:] = 0.
         if batch_attack:
             loss_i_batch = torch.mean((im_s - im_in) ** 2, (1,2,3))
             # TODO: add batch attack
         else:
+            # if i < 0.0*args.steps:
+            #     args.noise = 1
+            # else:
+            #     args.noise = epsilon
             loss, loss_i, loss_o = attack_our(im_s, output_s, im_in, net, args)
-            # loss, loss_i, loss_o = attack_cw(im_s, output_s, im_in, net, args)
+            # im_in = 0.5 * torch.tanh*(noise) + 1
+            # loss, loss_i, loss_o = attack_cw(im_s, output_s, noise, net, args)
 
         # if args.debug and loss_i <= args.noise:
         #     if i == 1 or i > 900:
@@ -522,6 +540,7 @@ def attack_(im_s, net, args):
                 
         if i%(args.steps//3) == 0:
             lr_scheduler.step()
+            # print("[WARNING] No learning rate decay")
             if args.debug:
                 # print(im_s.shape, output_s.shape)
                 _, _, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args)    
@@ -530,7 +549,6 @@ def attack_(im_s, net, args):
     # noise = noise_clipped
 
     im_adv, output_adv, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args) 
-    # TODO: recalculate bpp
         
     return im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi
 
@@ -553,8 +571,9 @@ class attacker:
         im_s, H, W = coder.read_image(image_file)
         im_s = im_s.to(self.args.device)
 
-        # self.y_main_s = torch.round(self.net.g_a(im_s))
-        self.y_main_s = self.net.g_a(im_s)
+        if self.args.debug:
+            # self.y_main_s = torch.round(self.net.g_a(im_s))
+            self.y_main_s = self.net.g_a(im_s)
         
         # mean_s = torch.mean(torch.abs(y_main_s), dim=(0,2,3))
         image_dir = "./attack/kodak/"
@@ -577,8 +596,8 @@ class attacker:
                 
                 self.y_main_adv = self.net.g_a(im_adv) 
                 # self.y_main_adv = torch.round(self.net.g_a(im_adv))     
-                
-                show_max_bar([self.y_main_s, self.y_main_adv], ["nature examples", "adversarial examples"], save_path="activations.pdf", sort=True) 
+                print("Input", vi)
+                show_max_bar([self.y_main_s, self.y_main_adv], ["nature examples", "adversarial examples"], save_path="activations.pdf", sort=True, vi=vi) 
             if self.args.defend:
                 y_main_adv_defend = defend(self.y_main_adv, self.args) 
                 show_max_bar([self.y_main_s, self.y_main_adv, y_main_adv_defend], ["origin", "adv", "defend"], save_path="activations_defend.pdf", sort=True) 
@@ -614,18 +633,28 @@ def batch_attack(args):
     bpp_ori, bpp, vi = bpp_ori_/len(images), bpp_/len(images), vi_/len(images)
     print("AVG:", args.quality, bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi)
     if args.debug:
-        y_main_s = torch.mean(torch.abs(torch.cat(y_main_s, dim=0)), dim=0, keepdim=True)
-        y_main_adv = torch.mean(torch.abs(torch.cat(y_main_adv, dim=0)), dim=0, keepdim=True)
-        show_max_bar([y_main_s, y_main_adv-y_main_s], ["nature examples", "adversarial examples"], save_path="activations_kodak.pdf", sort=True, stack=True)
+        # y_main_s = torch.mean(torch.abs(torch.cat(y_main_s, dim=0)), dim=0, keepdim=True)
+        # y_main_adv = torch.mean(torch.abs(torch.cat(y_main_adv, dim=0)), dim=0, keepdim=True)
 
-def attack_bitrates(args):
+        # TODO: mean or max?
+        # y_main_s = torch.amax(torch.cat(y_main_s, dim=0), dim=0, keepdim=True)
+        # y_main_adv = torch.amax(torch.cat(y_main_adv, dim=0), dim=0, keepdim=True)
+        y_main_s = torch.cat(y_main_s, dim=0)
+        y_main_adv = torch.cat(y_main_adv, dim=0)
+
+        torch.save([y_main_s, y_main_adv], "./attack/data/temp_mse.pt")
+
+def visualize_actication():
+    y_main_s, y_main_adv = torch.load("./attack/data/temp_mse.pt")
+    show_max_bar([y_main_s, y_main_adv], ["nature image", "adversarial example"], save_path="activations_kodak.pdf", sort=True, stack=True, vi=None)
+
+def main(args):
     if args.quality > 0:
         batch_attack(args)
+        if args.debug:
+            visualize_actication()
     else:
-        if args.model == "cheng2020":
-            q_max = 7
-        else:
-            q_max = 9
+        q_max = 7 if args.model == "cheng2020" else 9
         for q in range(1, q_max):
             args.quality = q
             batch_attack(args)
@@ -633,6 +662,5 @@ def attack_bitrates(args):
 if __name__ == "__main__":
     args = coder.config()
     args = args.parse_args()
-    # batch_attack(args)
-    attack_bitrates(args)
+    main(args)
     
