@@ -274,6 +274,12 @@ def train(args):
     if args.adv:
         N_ADV = 0
         print(batch_size - N_ADV, "adv examples in all", batch_size)
+    
+    confirm = input("Do you confirm the settings? (y or n)")
+    if confirm:
+        pass
+    else:
+        return
 
     for epoch in range(last_epoch, epochs_num):
         t = time.time()

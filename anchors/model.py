@@ -60,11 +60,15 @@ def init_model(MODEL, quality, metric, pretrained=True):
 
 def compressor(x, net, MODEL):
     y = net.g_a(x)
+    y_hat, z_hat, entropys = entropy_estimator(y, net, MODEL)
+    x_hat = net.g_s(y_hat)        
+    return {"x_hat":x_hat, "y_hat":y_hat, "z_hat":z_hat, "likelihoods":entropys}
+
+def entropy_estimator(y, net, MODEL):
     if MODEL == "factorized":
         y_hat, y_likelihoods = net.entropy_bottleneck(y)
         z_hat, z_likelihoods = 0, torch.Tensor([1.0])
         
-
     if MODEL == "hyper":
         z = net.h_a(torch.abs(y))
         z_hat, z_likelihoods = net.entropy_bottleneck(z)
@@ -82,8 +86,7 @@ def compressor(x, net, MODEL):
         scales_hat, means_hat = gaussian_params.chunk(2, 1)
         _, y_likelihoods = net.gaussian_conditional(y, scales_hat, means=means_hat)
 
-    x_hat = net.g_s(y_hat)        
-    return {"x_hat":x_hat, "y_hat":y_hat, "z_hat":z_hat, "likelihoods": {"y":y_likelihoods, "z":z_likelihoods}}
+    return y_hat, z_hat, {"y":y_likelihoods, "z":z_likelihoods}    
 
 def probe(x, net, name="y_hat", MODEL="hyper"):
     if name == "y_hat":
@@ -95,4 +98,15 @@ def probe(x, net, name="y_hat", MODEL="hyper"):
             z_hat = net.h_a(net.g_a(x))
         return net.h_s(z_hat)
     if name == "means_hat":
-        raise NotImplementedError
+        if MODEL == "context" or MODEL == "cheng2020":
+            y = net.g_a(x)
+            z = net.h_a(y)
+            y_hat = net.gaussian_conditional.quantize(y, "noise" if net.training else "dequantize")
+            z_hat, _ = net.entropy_bottleneck(z)
+            params = net.h_s(z_hat)
+            ctx_params = net.context_prediction(y_hat)
+            gaussian_params = net.entropy_parameters(torch.cat((params, ctx_params), dim=1))
+            _, means_hat = gaussian_params.chunk(2, 1)
+            return means_hat
+        else:
+            return None

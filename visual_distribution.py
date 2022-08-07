@@ -53,7 +53,6 @@ def plot_distrib_(ax, y_hat, y_hat_t, y_pred, y_pred_t, label, idx):
     # plt.close()
 
 def plot_distrib(ax, y_hat, y_pred, label=None, title=None, x_title=None):
-    fontsize = 16
     x = np.linspace(v_min+0.5, v_max-0.5, bins)
     x_pred_fine = np.linspace(v_min+0.5, v_max-0.5, 50*bins)
 
@@ -61,16 +60,19 @@ def plot_distrib(ax, y_hat, y_pred, label=None, title=None, x_title=None):
     y_pred = y_pred.cpu().numpy()
     ax.bar(x, y_hat_hist, label="gt")
     ax.plot(x_pred_fine, y_pred, label=f"pred", color="black")
-    ax.legend(fontsize=fontsize)
+    ax.legend(fontsize=4)
+    ax.tick_params(axis='both', labelsize=4)
     # ax.tight_layout()
     ax.set_ylim(ymax=0.1)
+    
+
     # ax.xaxis.set_label_position('top')
     if x_title:
         ax.set_xlabel(x_title, fontsize=fontsize)
     if title:
         ax.set_title(title, fontsize=fontsize)
     # ax.set_title(f"channel-{label}", loc="left", x=0.02, y=1, pad=-20)
-    ax.text(0.03, 0.95, f"channel-{label}", fontsize=fontsize, ha='left', va='top', transform=ax.transAxes)
+    ax.text(0.03, 0.95, f"channel-{label}", fontsize=4, ha='left', va='top', transform=ax.transAxes)
         
     ax.set_xticks(np.arange(min(x)+1, max(x), 2.0))
     # ax.autoscale(tight=True)
@@ -105,21 +107,34 @@ if __name__ == "__main__":
     from matplotlib.font_manager import findfont, FontProperties
     font = findfont(FontProperties(family=['sans-serif']))
     print(font)
+    fontsize = 8
+
     with torch.no_grad():
         ckpt = args.checkpoint
         args.ckpt = None
         net = coder.load_model(args, training=False).to(args.device)
         scales_base_ori, y_base_ori = get_data(args.source, net)
         scales_base_adv, y_base_adv = get_data(args.target, net)
+        if args.model in ["context", "cheng2020"]:
+            im = coder.read_image(args.source)[0].to(args.device)
+            means_base_ori = probe(im, net, "means_hat", MODEL=args.model)
+            im = coder.read_image(args.target)[0].to(args.device)
+            means_base_adv = probe(im, net, "means_hat", MODEL=args.model)
 
         args.checkpoint = ckpt
         net = coder.load_model(args, training=False).to(args.device)
         scales_at_ori, y_at_ori = get_data(args.source, net)
         scales_at_adv, y_at_adv = get_data(args.at_image, net)
+        if args.model in ["context", "cheng2020"]:
+            im = coder.read_image(args.source)[0].to(args.device)
+            means_at_ori = probe(im, net, "means_hat", MODEL=args.model)
+            im = coder.read_image(args.target)[0].to(args.device)
+            means_at_adv = probe(im, net, "means_hat", MODEL=args.model)
 
         pixels = y_base_ori.shape[1] * y_base_ori.shape[2]
     if args.model == "hyper":
-        means = torch.zeros_like(y_base_ori)
+        means_base_adv, means_base_ori, means_at_adv, means_at_ori = [torch.zeros_like(y_base_ori) for i in range(4)]
+
     v_min = -5.5
     v_max = 5.5
     bins = int(v_max-v_min)
@@ -127,15 +142,15 @@ if __name__ == "__main__":
     x_pred = np.linspace(v_min+0.5, v_max-0.5, bins)
     x_pred_fine = np.linspace(v_min+0.5, v_max-0.5, 50*bins)
 
-    y_pred_base_ori = predicted_distribution(x_pred, means, scales_base_ori)
-    y_pred_base_ori_fine = predicted_distribution(x_pred_fine, means, scales_base_ori)
-    y_pred_base_adv = predicted_distribution(x_pred, means, scales_base_adv)
-    y_pred_base_adv_fine = predicted_distribution(x_pred_fine, means, scales_base_adv)
+    y_pred_base_ori = predicted_distribution(x_pred, means_base_ori, scales_base_ori)
+    y_pred_base_ori_fine = predicted_distribution(x_pred_fine, means_base_ori, scales_base_ori)
+    y_pred_base_adv = predicted_distribution(x_pred, means_base_adv, scales_base_adv)
+    y_pred_base_adv_fine = predicted_distribution(x_pred_fine, means_base_adv, scales_base_adv)
 
-    y_pred_at_ori = predicted_distribution(x_pred, means, scales_at_ori)
-    y_pred_at_ori_fine = predicted_distribution(x_pred_fine, means, scales_at_ori)
-    y_pred_at_adv = predicted_distribution(x_pred, means, scales_at_adv)
-    y_pred_at_adv_fine = predicted_distribution(x_pred_fine, means, scales_at_adv)
+    y_pred_at_ori = predicted_distribution(x_pred, means_at_ori, scales_at_ori)
+    y_pred_at_ori_fine = predicted_distribution(x_pred_fine, means_at_ori, scales_at_ori)
+    y_pred_at_adv = predicted_distribution(x_pred, means_at_adv, scales_at_adv)
+    y_pred_at_adv_fine = predicted_distribution(x_pred_fine, means_at_adv, scales_at_adv)
 
     err, y_hat_hist, y_hat_t_hist = [], [], []
     for i in range(y_base_ori.shape[0]):
@@ -152,9 +167,7 @@ if __name__ == "__main__":
         # pixel-wise comparison instead of channel wise
 
         err.append(rate_adv - rate_ori)
-        # print(err[i])
-        # y_hat_hist = y_hat_hist.cpu().numpy()
-        # y_hat_t_hist = y_hat_t_hist.cpu().numpy()
+
     # sort y_hat_hist with err
     channel_index = np.arange(0, y_base_ori.shape[0])
     err = torch.stack(err)
@@ -178,9 +191,9 @@ if __name__ == "__main__":
     # plot 2*num_plot images
     num_plots = 3
     # fig = plt.figure(figsize=(20,8))
-    fig, axs = plt.subplots(2,num_plots,figsize=(4*num_plots, 5), constrained_layout=True, sharex=True, sharey=True)
-    axs[0,0].set_ylabel(r"$\it{p}$ (nature image)", fontsize=16)
-    axs[1,0].set_ylabel(r"$\it{p}$ (adv example)", fontsize=16)
+    fig, axs = plt.subplots(2,num_plots,figsize=(3.5, 2.2), constrained_layout=True, sharex=True, sharey=True) # 3.5 inch for IEEE Trans
+    axs[0,0].set_ylabel(r"$\it{p}$ (nature image)", fontsize=fontsize)
+    axs[1,0].set_ylabel(r"$\it{p}$ (adv example)", fontsize=fontsize)
     # subfigs = fig.subfigures(2, 1)
     if args.iter_x > 0:
         idx = args.iter_x

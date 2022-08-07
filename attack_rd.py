@@ -26,38 +26,44 @@ from anchors.utils import layer_compare
 
 def entropy(net, y_main, model="hyper"):
     z = net.h_a(y_main)
-    z_hat, z_likelihoods = net.entropy_bottleneck(z)
+    z_hat, _ = net.entropy_bottleneck(z)
     params = net.h_s(z_hat)
     if model == "hyper":
         scales_hat = params
         means_hat = 0.
     if model == "context":
         ctx_params = net.context_prediction(y_main)
-        gaussian_params = net.entropy_parameters(
-            torch.cat((params, ctx_params), dim=1)
-        )
+        gaussian_params = net.entropy_parameters(torch.cat((params, ctx_params), dim=1))
         scales_hat, means_hat = gaussian_params.chunk(2, 1)
     # print(scales_hat.shape, means_hat.shape, y_main.shape)
     return means_hat, scales_hat
 
 def clamp_feature_with_p(x, y_main, means_hat, scales_hat, epsilon=50):
+    # clip by distribution
     scales_hat = torch.clamp(scales_hat, min=0.11)
     pred_error = (y_main-means_hat) / scales_hat
     print(torch.max(y_main), torch.max(pred_error), torch.max(scales_hat))
     pred_error = torch.where(pred_error < epsilon, pred_error, torch.tensor(epsilon, dtype=pred_error.dtype, device=pred_error.device))
     pred_error = torch.where(pred_error > - epsilon, pred_error, torch.tensor(epsilon, dtype=pred_error.dtype, device=pred_error.device))
-    # print(pred_error[0,0,:,0])
     return pred_error * (scales_hat) + means_hat
 
 def clamp_value_naive(args, y_main):
     # index_max = torch.amax(y_main, dim=(2,3), keepdim=True)
     # index_min = torch.amin(y_main, dim=(2,3), keepdim=True)
-    thres = 1.5
-    index_max, index_min = torch.load(f"{args.model}-{args.metric}-{args.quality}.pt")
-    y_main_ = torch.where(y_main > index_max, index_max, y_main)
-    y_main_ = torch.where(y_main_ < index_min, index_min, y_main_)
-    y_main = torch.where(index_max < thres, y_main_, y_main)
-    y_main = torch.where(index_min > -thres, y_main_, y_main)
+    # thres = 1.5
+    # index_max, index_min = torch.load(f"{args.model}-{args.metric}-{args.quality}.pt")
+    if args.adv:
+        profile = f"{args.model}-{args.metric}-{args.quality}-adv"
+    else:
+        profile = f"{args.model}-{args.metric}-{args.quality}"
+    channel_max, channel_min = torch.load(f"./attack/data/{profile}_range.pt")
+    # print(y_main.shape, channel_max.shape)
+    channel_max = channel_max.view(1,-1,1,1)
+    channel_min = channel_min.view(1,-1,1,1)
+    y_main = torch.where(y_main > channel_max, channel_max, y_main)
+    y_main = torch.where(y_main < channel_min, channel_min, y_main)
+    # y_main = torch.where(index_max < thres, y_main_, y_main)
+    # y_main = torch.where(index_min > -thres, y_main_, y_main)
 
     # y_main = torch.where(y_main > index_max, index_max, y_main)
     # y_main = torch.where(y_main < index_min, index_min, y_main)
@@ -71,8 +77,8 @@ def anti_noise(x, scale=0.5):
     x_up = F.interpolate(x_down, scale_factor=1/scale, mode="bicubic", align_corners=False, antialias=True)
     x_res = x - x_up
 
-    coder.write_image(x_res+0.5, "./logs/resize_nearst_high.png", H=x.shape[2], W=x.shape[3])
-    coder.write_image(x_up, "./logs/resize_nearst_low.png", H=x.shape[2], W=x.shape[3])
+    # coder.write_image(x_res+0.5, "./logs/resize_nearst_high.png", H=x.shape[2], W=x.shape[3])
+    # coder.write_image(x_up, "./logs/resize_nearst_low.png", H=x.shape[2], W=x.shape[3])
     return x_up
     #  return F.interpolate(x_down, scale_factor=1/scale, mode="bicubic", align_corners=False, antialias=True)
 
@@ -225,10 +231,10 @@ def clip_dead_channel(y_main, profile):
     return y_main_
 
 def defend(y_main, args):
-    if args.adv:
-        profile = f"{args.model}-{args.metric}-{args.quality}-adv.pt"
-    else:
-        profile = f"{args.model}-{args.metric}-{args.quality}.pt"
+    # if args.adv:
+    #     profile = f"{args.model}-{args.metric}-{args.quality}-adv.pt"
+    # else:
+    #     profile = f"{args.model}-{args.metric}-{args.quality}.pt"
     # means_hat, scales_hat = entropy(self.net, y_main, model=args.model)
     # y_main = clamp_with_prior(im_in, self.net, y_main)
     # y_main, v_i, v_r = clamp_with_prior(im_, self.net, y_main, "final.pdf")
@@ -244,7 +250,8 @@ def defend(y_main, args):
     # y_main = torch.where(y_main < index_min, index_min, y_main)
     
     # y_main = torch.where(index_c, y_main, torch.tensor(0., dtype=y_main.dtype, device=y_main.device))
-    return clip_dead_channel(y_main, profile)
+    return clamp_value_naive(args, y_main)
+    # return clip_dead_channel(y_main, profile)
 
 def crop(x, padding):
     return x[:,:,padding:-padding,padding:-padding]
@@ -281,6 +288,7 @@ def eval(im_adv, im_s, output_s, net, args):
     if args.defend:
         y_main = net.g_a(im_)  
         y_main = defend(y_main, args)
+        _, _, result["likelihoods"] = models.entropy_estimator(y_main, net, args.model)
         x_ = net.g_s(torch.round(y_main))
         output_ = torch.clamp(x_, min=0., max=1.0)
     else:
@@ -289,8 +297,8 @@ def eval(im_adv, im_s, output_s, net, args):
         else:
             output_ = x_hat
 
-    if args.debug:
-        layer_compare(net, im_, im_s)
+    # if args.debug:
+    #     layer_compare(net, im_, im_s)
             # v_std = torch.mean((layer-(mean_after**0.5))**2)
             # index += 1
 
@@ -424,6 +432,7 @@ def attack_(im_s, net, args):
             print("Original PSNR:", psnr)
             y_main_s = net.g_a(im_s)
             
+            # Freq
             # im_s_4 = anti_noise(im_s, scale=0.25)
             # im_s_2 = anti_noise(im_s, scale=0.5)
             # freq_1 = im_s_4
@@ -500,6 +509,10 @@ def attack_(im_s, net, args):
     c = args.lamb_attack
     for i in range(args.steps):
         noise_clipped = ops.Up_bound.apply(ops.Low_bound.apply(noise, -noise_range), noise_range)
+        
+        # print("== only low freq perturbation ==")
+        # noise_clipped = anti_noise(noise_clipped, scale=0.25)
+
         # if args.pad:
             # noise_clipped = torch.nn.functional.pad(noise_clipped, (args.pad,args.pad, args.pad, args.pad), mode='constant', value=0)
         im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
@@ -593,11 +606,10 @@ class attacker:
 
             with torch.no_grad():
                 eval(im_adv, im_s, output_s, self.net, self.args)
-                
                 self.y_main_adv = self.net.g_a(im_adv) 
-                # self.y_main_adv = torch.round(self.net.g_a(im_adv))     
-                print("Input", vi)
-                show_max_bar([self.y_main_s, self.y_main_adv], ["nature examples", "adversarial examples"], save_path="activations.pdf", sort=True, vi=vi) 
+                # # self.y_main_adv = torch.round(self.net.g_a(im_adv))
+                # try     
+                # show_max_bar([self.y_main_s, self.y_main_adv], ["nature examples", "adversarial examples"], save_path="activations.pdf", sort=True, vi=vi) 
             if self.args.defend:
                 y_main_adv_defend = defend(self.y_main_adv, self.args) 
                 show_max_bar([self.y_main_s, self.y_main_adv, y_main_adv_defend], ["origin", "adv", "defend"], save_path="activations_defend.pdf", sort=True) 

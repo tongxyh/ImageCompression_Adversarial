@@ -119,10 +119,7 @@ def attack_our(im_s, output_s, im_in, net, args):
         loss = loss_i
         loss_o = torch.Tensor([0.])
     else:
-        # if args.pad:
-        #     y_main = net.g_a(F.pad(im_in, padder, mode=args.padding_mode))
-        # else:
-        if args.defend:
+        if args.adv:
             # TODO: attack self-ensemble
             best_mse, best_x, x_ = defend(net, im_in)
         else:
@@ -134,25 +131,9 @@ def attack_our(im_s, output_s, im_in, net, args):
         else:
             output_ = x_
 
-        # output_[:,:,H:,:] = 0.
-        # output_[:,:,:,W:] = 0.
-
-        # if LOSS_FUNC == "L2":
         loss_o = 1. - torch.mean((output_s - output_) * (output_s - output_)) # MSE(x_, y_)
-            # loss_o = 1. - (output_s - output_) ** 2
-        # if LOSS_FUNC == "L1":
-        #     loss_o = 1.0 - torch.mean(torch.abs(im_s - output_))
-        
-        # if im_s.shape[0] == 1:
-        # x_over = (x_ - output_)**2
-
-        # loss = torch.mean(torch.where(x_over>0.0001, x_over, loss_o))
-        # loss_o = torch.mean(loss_o)
         loss = loss_o
 
-        # if im_s.shape[0] > 1:
-        #     loss = torch.where(loss_i_batch > args.noise, loss_i_batch, loss_o)
-        #     loss = torch.mean(loss)
     return loss, loss_i, loss_o
 
 def attack_(im_s, net, args):
@@ -188,17 +169,9 @@ def attack_(im_s, net, args):
     c = args.lamb_attack
     for i in range(args.steps):
         noise_clipped = ops.Up_bound.apply(ops.Low_bound.apply(noise, -noise_range), noise_range)
-        # if args.pad:
-            # noise_clipped = torch.nn.functional.pad(noise_clipped, (args.pad,args.pad, args.pad, args.pad), mode='constant', value=0)
         im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
 
-        # im_in[:,:,H:,:] = 0.
-        # im_in[:,:,:,W:] = 0.
-        if batch_attack:
-            loss_i_batch = torch.mean((im_s - im_in) ** 2, (1,2,3))
-            # TODO: add batch attack
-        else:
-            loss, loss_i, loss_o = attack_our(im_s, output_s, im_in, net, args)
+        loss, loss_i, loss_o = attack_our(im_s, output_s, im_in, net, args)
 
         optimizer.zero_grad()
         loss.backward()                
@@ -210,11 +183,8 @@ def attack_(im_s, net, args):
         if i%(args.steps//3) == 0:
             lr_scheduler.step()
             if args.debug:
-                # print(im_s.shape, output_s.shape)
                 _, _, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args)    
                 net = net.train()
-                # coder.write_image(output_, "%s_out_%d_%0.8f.png"%(filename, i, loss.item()), H, W)
-    # noise = noise_clipped
 
     im_adv, output_adv, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args) 
     # TODO: recalculate bpp

@@ -80,25 +80,6 @@ def gradient_net():
                    strides=[1, 1, 1, 1],
                    padding='SAME')              
     return tf.math.tanh(tf.abs(ans_x) + tf.abs(ans_y))   
-def instantiate_model_signature(model, signature, inputs=None, outputs=None):
-  """Imports a trained model and returns one of its signatures as a function."""
-  with tf.io.gfile.GFile(model, "rb") as f:
-    string = f.read()
-  metagraph = tf.compat.v1.MetaGraphDef()
-  metagraph.ParseFromString(string)
-  wrapped_import = tf.compat.v1.wrap_function(
-      lambda: tf.compat.v1.train.import_meta_graph(metagraph), [])
-  graph = wrapped_import.graph
-  if inputs is None:
-    inputs = metagraph.signature_def[signature].inputs
-    inputs = [graph.as_graph_element(inputs[k].name) for k in sorted(inputs)]
-
-  if outputs is None:
-    outputs = metagraph.signature_def[signature].outputs
-    outputs = [graph.as_graph_element(outputs[k].name) for k in sorted(outputs)]
-  else:
-    outputs = [graph.as_graph_element(t) for t in outputs]
-  return wrapped_import.prune(inputs, outputs)
 
 def eval(args, config_name, ckpt_dir, images_glob):
   config = configs.get_config(config_name)
@@ -114,15 +95,15 @@ def eval(args, config_name, ckpt_dir, images_glob):
   output_image_s, bitstring = hific.build_model(input_image)
   with tf.Session() as sess:
       shape = sess.run(tf.shape(input_image))
-      # hific.restore_trained_model(sess, ckpt_dir)
-      with tf.io.gfile.GFile(ckpt_dir, "rb") as f:
-        string = f.read()
-      metagraph = tf.MetaGraphDef()
-      metagraph.ParseFromString(string)
+      hific.restore_trained_model(sess, ckpt_dir)
+      # with tf.io.gfile.GFile(ckpt_dir, "rb") as f:
+      #   string = f.read()
+      # metagraph = tf.MetaGraphDef()
+      # metagraph.ParseFromString(string)
       # saver = tf.train.Saver()
-      # latest_ckpt = tf.train.load_checkpoint(ckpt_dir)
-      tf.train.import_meta_graph(metagraph)
-      tf.logging.info("Restoring %s...", ckpt_dir)
+      # latest_ckpt = tf.train.latest_checkpoint(ckpt_dir)
+      # # tf.train.import_meta_graph(metagraph)
+      # tf.logging.info("Restoring %s...", ckpt_dir)
       # saver.restore(sess, latest_ckpt)
       # sess.run(tf.variables_initializer(tf.global_variables()))
       hific.prepare_for_arithmetic_coding(sess)
@@ -144,7 +125,7 @@ def attack_trained_model(args,
                        max_images=None,
                        ):
   """Attack a trained model."""
-  im_s , output_s, shape, bpp_ori = eval(args, config_name, ckpt_dir, images_glob)
+  im_s, output_s, shape, bpp_ori = eval(args, config_name, ckpt_dir, images_glob)
   tf.reset_default_graph()
   config = configs.get_config(config_name)
   # hific = model.HiFiC(config, helpers.ModelMode.ATTACK)
@@ -161,7 +142,7 @@ def attack_trained_model(args,
   # with tf.Session() as sess:
   #     noise_ = sess.run(noise)
   print(shape)
-  hific = model.HiFiC(config, helpers.ModelMode.ATTACK)
+  hific = model.HiFiC(config, helpers.ModelMode.ATTACK) # !!
   # noise_ = np.random.randn(shape[0],shape[1],shape[2],shape[3]).astype(np.float32)*(255.0/10.0)
   noise_ = np.zeros((shape[0],shape[1],shape[2],shape[3])).astype(np.float32)
   with tf.name_scope("attacker") as scope:
@@ -210,24 +191,23 @@ def attack_trained_model(args,
   with tf.Session() as sess:  
     
     # hific.restore_trained_model(sess, ckpt_dir) 
-    # sess.run(tf.variables_initializer(tf.global_variables()))
-    # variables = tf.global_variables()
-    # variables_to_restore = [v for v in variables if v.name.split('/')[0] not in ['attacker', 'attacker_opt']]
-    # saver = tf.train.Saver(variables_to_restore)
-    # # latest_ckpt = tf.train.latest_checkpoint(ckpt_dir)
-    # latest_ckpt = tf.train.load_checkpoint(ckpt_dir)
-    # saver.restore(sess, latest_ckpt)
+    sess.run(tf.variables_initializer(tf.global_variables()))
+    variables = tf.global_variables()
+    variables_to_restore = [v for v in variables if v.name.split('/')[0] not in ['attacker', 'attacker_opt']]
+    saver = tf.train.Saver(variables_to_restore)
+    latest_ckpt = tf.train.latest_checkpoint(ckpt_dir)
+    saver.restore(sess, latest_ckpt)
 
-    with tf.io.gfile.GFile(ckpt_dir, "rb") as f:
-      string = f.read()
-      metagraph = tf.MetaGraphDef()
-      metagraph.ParseFromString(string)
-      # saver = tf.train.Saver()
-      # latest_ckpt = tf.train.load_checkpoint(ckpt_dir)
-      tf.train.import_meta_graph(metagraph)
-      tf.logging.info("Restoring %s...", ckpt_dir)
-      # saver.restore(sess, latest_ckpt)
-      sess.run(tf.variables_initializer(tf.global_variables()))
+    # with tf.io.gfile.GFile(ckpt_dir, "rb") as f:
+    #   string = f.read()
+    #   metagraph = tf.MetaGraphDef()
+    #   metagraph.ParseFromString(string)
+    #   # saver = tf.train.Saver()
+    #   # latest_ckpt = tf.train.load_checkpoint(ckpt_dir)
+    #   tf.train.import_meta_graph(metagraph)
+    #   tf.logging.info("Restoring %s...", ckpt_dir)
+    #   # saver.restore(sess, latest_ckpt)
+    #   sess.run(tf.variables_initializer(tf.global_variables()))
 
     hific.prepare_for_arithmetic_coding(sess)
     steps = args.steps
@@ -257,7 +237,7 @@ def attack_trained_model(args,
         #   accumulated_metrics[metric].append(value)
 
         # # Save images.
-        if i % 10000 == 0:
+        if i == args.steps-1:
           name = image_name
           Image.fromarray(inp_np).save(
               os.path.join(out_dir, f'{name}_input_{i}_{ls_in:.4f}_{ls_out:.4f}.png'))
