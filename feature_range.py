@@ -25,7 +25,6 @@ if __name__ == "__main__":
     parser = coder.config()
     args = parser.parse_args()
     print("[Activation Range Evaluator]:", args.source)
-    
     net = coder.load_model(args, training=False).to(args.device)
 
     bpp, psnr, msim, msim_dB = [AverageMeter() for i in range(4)]

@@ -59,7 +59,7 @@ def plot_distrib(ax, y_hat, y_pred, label=None, title=None, x_title=None):
     y_hat_hist = y_hat.cpu().numpy()
     y_pred = y_pred.cpu().numpy()
     ax.bar(x, y_hat_hist, label="gt")
-    ax.plot(x_pred_fine, y_pred, label=f"pred", color="black")
+    ax.plot(x_pred_fine, y_pred, label=f"pred", color="black", linewidth=0.75)
     ax.legend(fontsize=4)
     ax.tick_params(axis='both', labelsize=4)
     # ax.tight_layout()
@@ -191,9 +191,9 @@ if __name__ == "__main__":
     # plot 2*num_plot images
     num_plots = 3
     # fig = plt.figure(figsize=(20,8))
-    fig, axs = plt.subplots(2,num_plots,figsize=(3.5, 2.2), constrained_layout=True, sharex=True, sharey=True) # 3.5 inch for IEEE Trans
-    axs[0,0].set_ylabel(r"$\it{p}$ (nature image)", fontsize=fontsize)
-    axs[1,0].set_ylabel(r"$\it{p}$ (adv example)", fontsize=fontsize)
+    fig, axs = plt.subplots(2,num_plots,figsize=(3.5, 2.0), constrained_layout=True, sharex=True, sharey=True) # 3.5 inch for IEEE Trans
+    axs[0,0].set_ylabel(r"$\it{p}$ (natural)", fontsize=fontsize)
+    axs[1,0].set_ylabel(r"$\it{p}$ (adv)", fontsize=fontsize)
     # subfigs = fig.subfigures(2, 1)
     if args.iter_x > 0:
         idx = args.iter_x

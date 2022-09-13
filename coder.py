@@ -18,6 +18,7 @@ from anchors import balle
 os.environ["TORCH_HOME"] = "./ckpts/torch/"
 from train import RateDistortionLoss
 
+
 def read_image(filename, padding=64):
     img = Image.open(filename)
     img = np.array(img)/255.0
@@ -156,18 +157,9 @@ def code(args, net, input_file, out_file=None):
     # criterion = RateDistortionLoss()
     im, _, _ = read_image(input_file)
     im = im.to(args.device)
-    if args.pad:
-        im_pad = F.pad(im, (args.pad, args.pad, args.pad, args.pad), mode="reflect")
-        result = models.compressor(im_pad, net, args.model)
-        padding_y = args.pad//16
-        
-        # x_hat = net.g_s(F.pad(result["y_hat"][:,:,padding_y:-padding_y, padding_y:-padding_y], (padding_y, padding_y, padding_y, padding_y), mode="reflect"))
-        x_hat = net.g_s(result["y_hat"])
-        # x_hat = net.g_s(result["y_hat"][:,:,padding_y:-padding_y, padding_y:-padding_y])
-        x_hat = x_hat[:,:,args.pad:-args.pad,args.pad:-args.pad]
-        result["x_hat"] = x_hat
-    else:
-        result = net(im)
+
+    result = net(im)
+
     if out_file:
         write_image(torch.clamp(result["x_hat"], min=0.0, max=1.0), out_file)
 

@@ -9,10 +9,12 @@ import torch
 from pytorch_msssim import ms_ssim
 from utils.metrics import PSNR
 from train import RateDistortionLoss
+from self_ensemble import defend
+
 
 # python recompression.py -s /workspace/ct/datasets/kodak/ -m hyper -q 3 -metric ms-ssim --download -steps 10
 # python recompression.py -s /workspace/ct/datasets/kodak/ -m hyper -q 3 -metric ms-ssim -ckpt ./ckpts/attack/hyper-3/ae_199_0.08826580_0.44019613.pkl -steps 10
-def test(args, repeat_times=10):
+def test(args, repeat_times=50):
     # print(args.source)
     images = sorted(glob(args.source))
     # print(images)
@@ -26,7 +28,17 @@ def test(args, repeat_times=10):
         im_ori = coder.read_image(ori)[0].to(args.device)
         for i in range(repeat_times):
             target = "./attack/kodak/{}_out{}.png".format(index, i)
-            result = coder.code(args, model, source, target)
+            if args.defend:
+                print("Self Ensemble Applied!")
+                with torch.no_grad():
+                    im, _, _ = coder.read_image(source)
+                    im = im.to(args.device)
+                    _, x, output_, likelihood = defend(model, im)
+                    result = model(x)
+                    result['x_hat'] = output_
+                    result['likelihoods'] = likelihood 
+            else:  
+                result = coder.code(args, model, source, target)
             metrics = criterion(result, im_ori, training=False)
             # print(metrics["bpp_loss"].item(), PSNR(torch.clamp(result["x_hat"], min=0, max=1), im_ori).item(), ms_ssim(torch.clamp(result["x_hat"], min=0, max=1), im_ori, data_range=1.0, size_average=True).item(), "Result")
             bpps[i, j], psnrs[i, j], sims[i,j] = metrics["bpp_loss"].item(), PSNR(torch.clamp(result["x_hat"], min=0, max=1), im_ori).item(), ms_ssim(torch.clamp(result["x_hat"], min=0, max=1), im_ori, data_range=1.0, size_average=True).item()

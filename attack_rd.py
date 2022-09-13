@@ -609,7 +609,7 @@ class attacker:
                 self.y_main_adv = self.net.g_a(im_adv) 
                 # # self.y_main_adv = torch.round(self.net.g_a(im_adv))
                 # try     
-                # show_max_bar([self.y_main_s, self.y_main_adv], ["nature examples", "adversarial examples"], save_path="activations.pdf", sort=True, vi=vi) 
+                show_max_bar([self.y_main_s, self.y_main_adv], ["natural examples", "adversarial examples"], save_path="activations.pdf", sort=True, vi=vi) 
             if self.args.defend:
                 y_main_adv_defend = defend(self.y_main_adv, self.args) 
                 show_max_bar([self.y_main_s, self.y_main_adv, y_main_adv_defend], ["origin", "adv", "defend"], save_path="activations_defend.pdf", sort=True) 
@@ -658,7 +658,7 @@ def batch_attack(args):
 
 def visualize_actication():
     y_main_s, y_main_adv = torch.load("./attack/data/temp_mse.pt")
-    show_max_bar([y_main_s, y_main_adv], ["nature image", "adversarial example"], save_path="activations_kodak.pdf", sort=True, stack=True, vi=None)
+    show_max_bar([y_main_s, y_main_adv], ["natural image", "adversarial example"], save_path="activations_kodak.pdf", sort=True, stack=True, vi=None)
 
 def main(args):
     if args.quality > 0:

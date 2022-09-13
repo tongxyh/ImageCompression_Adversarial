@@ -242,8 +242,10 @@ def train(args):
     print("Lambda:", lamb)
     print("Learning rate (training):", args.lr_train)
     print("Learning rate (adversarial):", args.lr_attack)
-    # model_dir = f"{args.model}-{lamb}-{args.metric}"
-    model_dir = f"{args.model}-Inf-{args.metric}"
+    if lamb == 100 or lamb == 1:
+        model_dir = f"{args.model}-Inf-{args.metric}"
+    else:
+        model_dir = f"{args.model}-{lamb}-{args.metric}"
     epochs_num = 200
     if args.adv:
         epochs_num = 100
@@ -255,15 +257,14 @@ def train(args):
 
     if not os.path.exists(ckpt_dir):
         os.makedirs(ckpt_dir)
+    train_data = '/workspace/dataset/vimeo'
     print("Save ckpts to:", ckpt_dir)
+    print("Load train data:", train_data)
     # with open(f"{ckpt_dir}/log.txt", "w") as f:
         # f.write("=========================={model_dir}=======================\n")
 
     criterion = RateDistortionLoss(metric=args.metric, lmbda=lamb)
 
-    t = time.time()
-    train_dataloader, test_dataloader = load_data('/workspace/dataset/vimeo', batch_size, crop=256)
-    print(f"Dataloader cost {time.time() - t}s") 
     # train_loader = load_data('/workspace/ct/datasets/datasets/div2k', batch_size)
     # train_loader = load_multi_data('/workspace/ct/datasets/datasets/div2k', f'/workspace/ct/datasets/attack/{model_dir}/iter-2', batch_size)
     
@@ -275,11 +276,15 @@ def train(args):
         N_ADV = 0
         print(batch_size - N_ADV, "adv examples in all", batch_size)
     
-    confirm = input("Do you confirm the settings? (y or n)")
-    if confirm:
-        pass
-    else:
-        return
+    # confirm = input("Do you confirm the settings? (y or n)")
+    # if confirm:
+    #     pass
+    # else:
+    #     return
+
+    t = time.time()
+    train_dataloader, test_dataloader = load_data(train_data, batch_size, crop=256)
+    print(f"Dataloader cost {time.time() - t}s") 
 
     for epoch in range(last_epoch, epochs_num):
         t = time.time()

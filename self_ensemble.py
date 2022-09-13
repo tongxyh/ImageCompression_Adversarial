@@ -14,14 +14,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from PIL import Image
-from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
 import coder
 from anchors import balle
 from utils import torch_msssim, ops
 from anchors import model as models
-from anchors.utils import layer_compare
+# from anchors.utils import layer_compare
 
 def rotates(x, reverse=-1):
     if reverse == -1:
@@ -53,29 +52,49 @@ def self_ensemble(net, x):
     x_set0 = torch.cat(xs[:4], dim=0)
     x_set1 = torch.cat(xs[4:], dim=0) 
     best_mse, i = float("inf"), 0
+    likelihoods = [0, 0]
+    if net.training:
+        y_main = net.g_a(x_set0)
+        x_hats = net.g_s(y_main)
+    else:
+        result = net(x_set0)
+        x_hats = result["x_hat"]
 
-    result = net(x_set0)
-    for x, x_hat in zip(xs[:4], result["x_hat"]):
+    num_pixels = (x.shape[2]) * (x.shape[3])
+    for x, x_hat in zip(xs[:4], x_hats):
         mse = torch.mean((x - x_hat)**2)
-        # print(-10*math.log10(mse))
         if mse < best_mse:
             best_idx, best_mse, best_x, best_x_hat = i, mse, x, x_hat
+            if not net.training:
+                likelihoods = [likelihoods_[i-4] for likelihoods_ in result["likelihoods"].values()]
+                # bpp = sum((torch.log(likelihood).sum() / (-math.log(2) * num_pixels)) for likelihood in likelihoods)
+                # print(i, bpp, -10*math.log10(mse))
         i = i + 1
 
-    result = net(x_set1)
-    for x, x_hat in zip(xs[4:], result["x_hat"]):
+    if net.training:
+        y_main = net.g_a(x_set1)
+        x_hats = net.g_s(y_main)
+    else:
+        result = net(x_set1)
+        x_hats = result["x_hat"]
+
+    for x, x_hat in zip(xs[4:], x_hats):
         mse = torch.mean((x - x_hat)**2)
-        # print(-10*math.log10(mse))
         if mse < best_mse:
             best_idx, best_mse, best_x, best_x_hat = i, mse, x, x_hat
+            if not net.training:
+                likelihoods = [likelihoods_[i-4] for likelihoods_ in result["likelihoods"].values()]
+                # bpp = sum((torch.log(likelihood).sum() / (-math.log(2) * num_pixels)) for likelihood in likelihoods)
+                # print(i, bpp, -10*math.log10(mse))
         i = i + 1
-    return best_mse, best_x, torch.clamp(rotates(torch.unsqueeze(best_x_hat, dim=0), reverse=best_idx), min=0., max=1.)
+    if len(likelihoods) == 1:
+        likelihoods = {'y':likelihoods[0]}
+    else:
+        likelihoods = {'y':likelihoods[0], 'z':likelihoods[1]}
+    return best_mse, best_x, torch.clamp(rotates(torch.unsqueeze(best_x_hat, dim=0), reverse=best_idx), min=0., max=1.), likelihoods
 
 def defend(net, x):
     return self_ensemble(net, x)
-
-def crop(x, padding):
-    return x[:,:,padding:-padding,padding:-padding]
 
 @torch.no_grad()
 def eval(im_adv, im_s, output_s, net, args):
@@ -89,20 +108,19 @@ def eval(im_adv, im_s, output_s, net, args):
     
     mse_in = torch.mean((im_ - im_s)**2)
     if args.defend:
-        _, x, output_ = defend(net, im_)
+        _, x, output_, likelihood = defend(net, im_)
         result = net(x)
+        result["likelihoods"] = likelihood
     else:
         if args.clamp:
             output_ = torch.clamp(x_hat, min=0., max=1.0)
         else:
             output_ = x_hat
 
-    if args.debug:
-        layer_compare(net, im_, im_s)
-    
     num_pixels = (im_adv.shape[2]) * (im_adv.shape[3])
     bpp = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
     mse_out = torch.mean((output_ - output_s)**2)
+    # print(-10*math.log10(mse_out), mse_in)
     if mse_in > 1e-20 and mse_out > 1e-20:
         vi = 10. * math.log10(mse_out/mse_in)
     else:
@@ -121,7 +139,7 @@ def attack_our(im_s, output_s, im_in, net, args):
     else:
         if args.adv:
             # TODO: attack self-ensemble
-            best_mse, best_x, x_ = defend(net, im_in)
+            best_mse, best_x, x_, _ = defend(net, im_in)
         else:
             y_main = net.g_a(im_in)
             x_ = net.g_s(y_main)
@@ -137,7 +155,6 @@ def attack_our(im_s, output_s, im_in, net, args):
     return loss, loss_i, loss_o
 
 def attack_(im_s, net, args):
-
     # print("[*] Input size:", im_s.size())
     H, W = im_s.shape[2], im_s.shape[3]
     num_pixels = H * W
@@ -152,10 +169,10 @@ def attack_(im_s, net, args):
         
         if args.defend:
             psnr = -10*math.log10(torch.mean((output_s - im_s)**2)) 
-            print("Original PSNR:", psnr)
-            best_mse, best_x, best_x_hat = defend(net, im_s)
-            psnr = -10*math.log10(best_mse) 
-            print("PSNR after defending:", psnr)
+            # print("Original PSNR:", psnr)
+            # best_mse, best_x, best_x_hat, _ = defend(net, im_s)
+            # psnr = -10*math.log10(best_mse) 
+            # print("PSNR after defending:", psnr)
 
     batch_attack = False
     # LOSS_FUNC = args.att_metric
@@ -187,7 +204,6 @@ def attack_(im_s, net, args):
                 net = net.train()
 
     im_adv, output_adv, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args) 
-    # TODO: recalculate bpp
         
     return im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi
 
@@ -281,6 +297,5 @@ def attack_bitrates(args):
 if __name__ == "__main__":
     args = coder.config()
     args = args.parse_args()
-    # batch_attack(args)
     attack_bitrates(args)
     
