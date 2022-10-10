@@ -91,6 +91,7 @@ def self_ensemble(net, x):
         likelihoods = {'y':likelihoods[0]}
     else:
         likelihoods = {'y':likelihoods[0], 'z':likelihoods[1]}
+    print(best_idx, -10*math.log10(mse))
     return best_mse, best_x, torch.clamp(rotates(torch.unsqueeze(best_x_hat, dim=0), reverse=best_idx), min=0., max=1.), likelihoods
 
 def defend(net, x):

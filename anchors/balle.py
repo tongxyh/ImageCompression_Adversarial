@@ -51,7 +51,7 @@ class Image_coder(torch.nn.Module):
             scales_hat, means_hat = gaussian_params.chunk(2, 1)
             _, y_likelihoods = self.net.gaussian_conditional(y, scales_hat, means=means_hat)
 
-        x_hat = self.net.g_s(y_hat)        
+        x_hat = self.net.g_s(y_hat)
         return x_hat, y, z_hat, y_likelihoods, z_likelihoods
 
     def load_state_dict(self, state_dict):

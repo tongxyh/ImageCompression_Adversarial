@@ -127,70 +127,68 @@ def clip_dead_channel(y_main, profile):
 def defend(y_main, args):
     return clamp_value_naive(args, y_main)
 
-def crop(x, padding):
-    return x[:,:,padding:-padding,padding:-padding]
+def detect(y_main):
+    if args.adv:
+        profile = f"{args.model}-{args.metric}-{args.quality}-adv"
+    else:
+        profile = f"{args.model}-{args.metric}-{args.quality}"
+    channel_max, channel_min = torch.load(f"./attack/data/{profile}_range.pt")
+
+    channel_max = channel_max.view(1,-1,1,1)
+    channel_min = channel_min.view(1,-1,1,1)
+    
+    index_max = torch.amax(y_main, dim=(2,3), keepdim=True)
+    index_min = torch.amin(y_main, dim=(2,3), keepdim=True)
+
+    err_max = torch.clamp(index_max - channel_max, min=0.0)
+    err_min = torch.clamp(index_min - channel_min, max=0.0)
+    return torch.mean(err_max**2) + torch.mean(err_min**2)
 
 @torch.no_grad()
-def eval(im_adv, im_s, output_s, net, args):
-    net.eval()
-    # im_uint8 = torch.round(im_adv * 255.0)/255.0
-    # im_ =  torch.clamp(im_uint8, min=0., max=1.0)
-    im_ = torch.clamp(im_adv, min=0., max=1.0)
-
-    # save adverserial input
-    # coder.write_image(im_, "%s_advin_%d_%0.8f.png"%(filename, i, loss.item()), H, W)
-    if args.pad:
-        result = net(F.pad(im_, (args.pad, args.pad, args.pad, args.pad), mode=args.padding_mode))
-    else:
-        result = net(im_)
-        
-        # y_main = net.g_a(im_)  
-        # x_ = net.g_s(y_main)
-        # result["x_hat"] = x_
-
-    x_hat = result["x_hat"]
-    if args.pad:
-        # x_hat = net.g_s(torch.nn.functional.pad(crop(result["y_hat"], padding_y), (padding_y, padding_y, padding_y, padding_y), mode=args.padding_mode))    
-        x_hat = crop(x_hat, args.pad)
+def eval(image, net, score_best):
+    save_path = "./attack/search/"
     
-    mse_in = torch.mean((im_ - im_s)**2)
-    if args.defend:
-        y_main = net.g_a(im_)  
-        y_main = defend(y_main, args)
-        _, _, result["likelihoods"] = models.entropy_estimator(y_main, net, args.model)
-        x_ = net.g_s(torch.round(y_main))
-        output_ = torch.clamp(x_, min=0., max=1.0)
-    else:
-        if args.clamp:
-            output_ = torch.clamp(x_hat, min=0., max=1.0)
-        else:
-            output_ = x_hat
+    filename = image.split('/')[-1]
+    
+    im_s, _ , _ = coder.read_image(image)
+    im_ = torch.clamp(im_s.cuda(), min=0., max=1.0)
+    
+    y_main = net.g_a(im_)
+    score = detect(y_main)
+    if score > score_best:
+        print(image, score_best)
+        print("FIND YOU!", image, score)
+        result = net(im_)
+        x_hat = result["x_hat"]
+        coder.write_image(im_s, save_path+filename)
+        coder.write_image(torch.clamp(x_hat, min=0., max=1.0), save_path+filename[:-4]+f"_{score}.png")
+        score_best = score
+         
+    # if args.defend:
+    #     y_main = net.g_a(im_)  
+    #     y_main = defend(y_main, args)
+    #     _, _, result["likelihoods"] = models.entropy_estimator(y_main, net, args.model)
+    #     x_ = net.g_s(torch.round(y_main))
+    #     output_ = torch.clamp(x_, min=0., max=1.0)
+    # else:
+    #     if args.clamp:
+    #         output_ = torch.clamp(x_hat, min=0., max=1.0)
+    #     else:
+    #         output_ = x_hat
 
-    num_pixels = (im_adv.shape[2]) * (im_adv.shape[3])
-    bpp = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
-    # recalculate bpp
-    # bpp = torch.log(result["likelihoods"]["y"]).sum() / (-math.log(2) * num_pixels)
-    # bpp +=torch.log(result["likelihoods"]["z"]).sum() / (-math.log(2) * num_pixels)
-
-    mse_out = torch.mean((output_ - output_s)**2)
-    if mse_in > 1e-20 and mse_out > 1e-20:
-        vi = 10. * math.log10(mse_out/mse_in)
-    else:
-        vi = None
-        print(f"[!] Warning: mse_in ({mse_in}) or mse_out {mse_out} is zero")
-    if args.debug:
-        print("loss_rec:", mse_out.item(), "loss_in:", mse_in.item(), "VI (mse):", vi)
-    # MS-SSIM
-    return im_, output_, bpp, mse_in, mse_out, vi
+    # num_pixels = (im_s.shape[2]) * (im_s.shape[3])
+    # bpp = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
+    # # mse_out = torch.mean((output_ - output_s)**2)
+    return score_best
 
 def batch_test(args):    
     images = sorted(glob(args.source))
-    for i, image in enumerate(images):
-        # evaluate time of each attack
-        start = time.time()
-        eval()
-        end = time.time()
-        print(image, "Time:", end-start)
+    score_best = 0
+    net = coder.load_model(args, training=False)
+    for i, image in enumerate(images):    
+        score_best = eval(image, net, score_best)
+
+    
 
 def main(args):
     if args.quality > 0:

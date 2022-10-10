@@ -254,29 +254,6 @@ def eval(im_adv, im_s, output_s, net, args):
 
     if args.debug:
         layer_compare(net, im_, im_s)
-            # v_std = torch.mean((layer-(mean_after**0.5))**2)
-            # index += 1
-
-            # # if index in [2, 4, 6]:
-            # #     norm = layer/temp[0]
-            # #     norm_s = layer/temp[1]
-            # #     print("GDN norm:", torch.max(norm), torch.max(norm_s), torch.mean(norm), torch.mean(norm_s))
-
-            # temp = layer, layer_s
-            # if self.args.model == "debug":
-            #     pass
-            # else:
-            #     if index in [2, 4, 6]:
-            #         # gamma_mean = layerout_s["gdn_gamma_mean"][3:][index//2]
-            #         # beta_mean = layerout_s["gdn_beta_mean"][3:][index//2 ]
-            #         # print("GDN factor:", math.sqrt((mean_after+v_std)*128*gamma_mean+beta_mean))
-            #         beta = f.beta_reparam(f.beta)
-            #         gamma = f.gamma_reparam(f.gamma)
-            #         _, C, _, _ = temp[0].size()
-            #         gamma = gamma.reshape(C, C, 1, 1)
-            #         norm_ori = torch.sqrt(torch.nn.functional.conv2d(temp[1] ** 2, gamma, beta))
-            #         norm_adv = torch.sqrt(torch.nn.functional.conv2d(temp[0] ** 2, gamma, beta))
-            #         print("GDN norm:", torch.max(norm_ori), torch.max(norm_adv), torch.mean(norm_ori), torch.mean(norm_adv))
     
     num_pixels = (im_adv.shape[2]) * (im_adv.shape[3])
     bpp = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
@@ -447,10 +424,6 @@ def attack_(im_s, net, args):
         if not args.pad:
             output_s = torch.clamp(result["x_hat"], min=0., max=1.0)
         else:
-            # result = models.compressor(im_s, net, args.model)
-            # y_hat = torch.nn.functional.pad(result["y_hat"][:,:,padding_y:-padding_y,padding_y:-padding_y], padder_y, mode=args.padding_mode)
-            # x_hat = crop(net.g_s(y_hat), padding)
-            # result["likelihoods"]["y"] = crop(result["likelihoods"]["y"], padding_y)
             output_s = torch.clamp(result["x_hat"][:,:,args.pad:-args.pad,args.pad:-args.pad], min=0., max=1.0)
 
         bpp_ori = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
@@ -459,18 +432,6 @@ def attack_(im_s, net, args):
             psnr = -10*math.log10(torch.mean((output_s - im_s)**2)) 
             print("Original PSNR:", psnr)
             y_main_s = net.g_a(im_s)
-            
-            # im_s_4 = anti_noise(im_s, scale=0.25)
-            # im_s_2 = anti_noise(im_s, scale=0.5)
-            # freq_1 = im_s_4
-            # freq_2 = im_s_2 - im_s_4
-            # freq_3 = im_s - im_s_2 - (im_s_2 - im_s_2)
-            # y_main_low = net.g_a(im_s_2)
-            # y_main_high = net.g_a(im_s - im_s_2 + 0.5)
-            # y_main_anchor = net.g_a(torch.zeros_like(im_s)+0.5)
-            # show_max_bar([y_main_s, y_main_low, y_main_high - y_main_anchor] , ["origin", "low frequency", "high frequency"], save_path="origin.pdf", sort=True, stack=True)
-            # show_max_bar([y_main_s, y_main_low] , ["origin", "low frequency", "high frequency"], save_path="low_freq.pdf", sort=True)
-            # show_max_bar([y_main_s, y_main_high - y_main_anchor] , ["origin", "high frequency"], save_path="high_freq.pdf", sort=True)
 
             y_main_ = defend(y_main_s, args)
             
@@ -480,49 +441,6 @@ def attack_(im_s, net, args):
             psnr = -10*math.log10(torch.mean((x_ - im_s)**2)) 
             print("PSNR after clipping:", psnr)
         
-        # index_c = torch.ones_like(y_main)            
-        # for i in range(y_main.shape[1]):
-        #     y_main_ = torch.zeros_like(y_main)
-        #     y_main_ = 0. + y_main
-        #     y_main_[:,i,:,:] = 0.
-        #     x_ = self.net.g_s(y_main_)
-        #     # print(psnr, psnr + 10*math.log10(torch.mean((x_ - im_s)**2)))
-        #     # remove channel with minumn psnr loss
-        #     if abs(psnr + 10*math.log10(torch.mean((x_ - im_s)**2))) < 0.005:
-        #         index_c[:,i,:,:] = 0
-
-        # index_c = torch.sum(index_c, (0,2,3), keepdim=True, dtype=bool)
-        # y_main = torch.where(index_c, y_main, torch.tensor(0., dtype=y_main.dtype, device=y_main.device))
-        # x_ = self.net.g_s(y_main)
-        # psnr = -10*math.log10(torch.mean((x_ - im_s)**2)) 
-        # print(psnr)
-        # index_c = torch.sum(torch.round(torch.abs(y_main)), (0,2,3), keepdim=True)
-        # index_max = torch.where(torch.abs(y_main)>3, True, False)
-        # index_max = torch.sum(index_max, (0,2,3), keepdim=True)
-        # print(index_c, index_max)
-        # torch.bitwise_or(torch.max(torindex_c) > 1, torch.sum(index_c) > 100)
-
-        # index_c = torch.where(index_c > 10 + index_max, True, False)
-        # print(index_c)
-        # print(sorted(torch.sum(torch.round(y_main), (0,2,3), dtype=bool).cpu().numpy()))
-
-        # output_s = ops.Up_bound.apply(ops.Low_bound.apply(x_, 0.), 1.)
-        # if self.args.debug:
-        #     layerout_s = layer_print(self.net, im_s)
-        #     if self.args.model == "debug":
-        #         pass
-        #     else:
-        #         print("GDN parameters:")
-        #         layerout_s["gdn_gamma_mean"] = []
-        #         layerout_s["gdn_beta_mean"] = []
-        #         for gamma, beta in zip(layerout_s["gdn_gamma"], layerout_s["gdn_beta"]):
-        #             mean_gamma, max_gamma = torch.mean(torch.abs(gamma)).item(), torch.max(torch.abs(gamma)).item()
-        #             mean_beta, max_beta = torch.mean(torch.abs(beta)).item(), torch.max(torch.abs(beta)).item()
-        #             print(mean_gamma, max_gamma, mean_beta, max_beta)
-        #             # save mean_gamma, max_gamma to layerout_s as list
-        #             layerout_s["gdn_gamma_mean"].append(mean_gamma)
-        #             layerout_s["gdn_beta_mean"].append(mean_beta)
-
     batch_attack = False
     # LOSS_FUNC = args.att_metric
     noise_range = args.epsilon/255.0

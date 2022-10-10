@@ -14,6 +14,7 @@ from self_ensemble import defend
 
 # python recompression.py -s /workspace/ct/datasets/kodak/ -m hyper -q 3 -metric ms-ssim --download -steps 10
 # python recompression.py -s /workspace/ct/datasets/kodak/ -m hyper -q 3 -metric ms-ssim -ckpt ./ckpts/attack/hyper-3/ae_199_0.08826580_0.44019613.pkl -steps 10
+@torch.no_grad()
 def test(args, repeat_times=50):
     # print(args.source)
     images = sorted(glob(args.source))
@@ -27,16 +28,15 @@ def test(args, repeat_times=50):
         ori = source
         im_ori = coder.read_image(ori)[0].to(args.device)
         for i in range(repeat_times):
-            target = "./attack/kodak/{}_out{}.png".format(index, i)
+            target = "./attack/kodak/{}_{}_out{}.png".format(args.log, index, i)
             if args.defend:
-                print("Self Ensemble Applied!")
-                with torch.no_grad():
-                    im, _, _ = coder.read_image(source)
-                    im = im.to(args.device)
-                    _, x, output_, likelihood = defend(model, im)
-                    result = model(x)
-                    result['x_hat'] = output_
-                    result['likelihoods'] = likelihood 
+                im, _, _ = coder.read_image(source)
+                im = im.to(args.device)
+                _, x, output_, likelihood = defend(model, im)
+                result = model(x)
+                result['x_hat'] = output_
+                result['likelihoods'] = likelihood 
+                coder.write_image(torch.clamp(result["x_hat"], min=0.0, max=1.0), target)
             else:  
                 result = coder.code(args, model, source, target)
             metrics = criterion(result, im_ori, training=False)
@@ -52,9 +52,12 @@ def test(args, repeat_times=50):
             # cmd = "python /workspace/ct/code/NIC/Util/CLIC/compare.py {} {}".format(ori, target)
             # os.system(cmd)
             source = target
-    for i in range(repeat_times):
-        print(np.mean(bpps, axis=1)[i], np.mean(psnrs, axis=1)[i], np.mean(sims, axis=1)[i], np.mean(sims_dB, axis=1)[i])
+    # for i in range(repeat_times):
+    #     print(i, np.mean(bpps, axis=1)[i], np.mean(psnrs, axis=1)[i], np.mean(sims, axis=1)[i], np.mean(sims_dB, axis=1)[i])
+    print("Final:", np.mean(bpps, axis=1)[-1], np.mean(psnrs, axis=1)[-1], np.mean(sims, axis=1)[-1], np.mean(sims_dB, axis=1)[-1])
 
 if __name__ == "__main__":
     args = coder.config().parse_args()
+    if args.defend:
+        print("Self Ensemble Applied!")
     test(args, repeat_times=args.steps)

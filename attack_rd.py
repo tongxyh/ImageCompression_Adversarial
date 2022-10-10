@@ -158,7 +158,10 @@ def plot_bar(ax, ax_x, data, labels, save_path, stack=False):
     plt.savefig(f"./logs/{save_path}")
 
 def show_max_bar(data, labels, save_path, sort=True, stack=False, vi=None):
-    fig, ax = plt.subplots()
+    # figsize = 3.5, 2
+
+    fig, ax = plt.subplots(constrained_layout=True)
+    # fig, ax = plt.subplots(figsize=figsize, constrained_layout=True)
     # maxs = [torch.amax(torch.abs(i), dim=(0,2,3)) for i in data]
     maxs = [torch.amax(i, dim=(0,2,3)) for i in data]
     mins = [torch.amin(i, dim=(0,2,3)) for i in data]
@@ -194,16 +197,20 @@ def show_max_bar(data, labels, save_path, sort=True, stack=False, vi=None):
     ax.plot(ax_x, mins[1].detach().cpu(), linewidth=1, label=labels[1], color='r')
     ax.plot(ax_x, maxs[1].detach().cpu(), linewidth=1, color='r')    
     
-    ax.legend(prop={'size': 14})
+    fontsize = 16
     ax.grid(linewidth=0.1, linestyle="--")
-    ax.text(0.95, 0.05, f"$\Delta$PSNR={vi:0.2f}", fontsize=20, ha='right', va='bottom', transform=ax.transAxes)
-
-    ax.set_xlabel("channel index", fontsize=14)
-    ax.set_ylabel("activation magnitude", fontsize=14)
     plt.ylim(ymin=-25, ymax=25)
-    plt.tight_layout()
-    plt.savefig(f"./logs/{save_path}")
+    # plt.ylim(ymin=-12, ymax=12)
+    ax.legend(prop={'size': fontsize})
 
+    ax.set_xlabel("channel index (sorted)", fontsize=fontsize)
+    ax.set_ylabel("activation magnitude", fontsize=fontsize)
+    if vi < 10:
+        ax.text(0.95, 0.05, f"$\Delta$PSNR={vi:0.2f}", fontsize=20, ha='right', va='bottom', color='g', transform=ax.transAxes)
+    else:
+        ax.text(0.95, 0.05, f"$\Delta$PSNR={vi:0.2f}", fontsize=20, ha='right', va='bottom', transform=ax.transAxes)
+        
+    plt.savefig(f"./logs/{save_path}")
     # ax.plot(ax_x, maxs[0[].detach().cpu().numpy(), label=labels[0], linewidth=0.5)
     # plot_bar(ax, ax_x, maxs, labels, save_path, stack)
 
@@ -603,13 +610,14 @@ class attacker:
             coder.write_image(output_adv, "%s_advout_%0.8f.png"%(filename, mse_out.item()))
             coder.write_image(torch.clamp(im_adv-im_s + 0.5, min=0., max=1.), "%s_noise_%0.8f.png"%(filename, mse_out.item()))
             self.net.eval()
-
+            
+            # Channel-wise Activation Visualization
             with torch.no_grad():
                 eval(im_adv, im_s, output_s, self.net, self.args)
-                self.y_main_adv = self.net.g_a(im_adv) 
+                self.y_main_adv = self.net.g_a(im_adv)
                 # # self.y_main_adv = torch.round(self.net.g_a(im_adv))
-                # try     
-                show_max_bar([self.y_main_s, self.y_main_adv], ["natural examples", "adversarial examples"], save_path="activations.pdf", sort=True, vi=vi) 
+                show_max_bar([self.y_main_s, self.y_main_adv], ["natural example", "adversarial example"], save_path="activations.pdf", sort=True, vi=vi)
+                
             if self.args.defend:
                 y_main_adv_defend = defend(self.y_main_adv, self.args) 
                 show_max_bar([self.y_main_s, self.y_main_adv, y_main_adv_defend], ["origin", "adv", "defend"], save_path="activations_defend.pdf", sort=True) 
@@ -654,11 +662,12 @@ def batch_attack(args):
         y_main_s = torch.cat(y_main_s, dim=0)
         y_main_adv = torch.cat(y_main_adv, dim=0)
 
-        torch.save([y_main_s, y_main_adv], "./attack/data/temp_mse.pt")
+        torch.save([y_main_s, y_main_adv, vi], "./attack/data/temp_mse.pt")
 
 def visualize_actication():
-    y_main_s, y_main_adv = torch.load("./attack/data/temp_mse.pt")
-    show_max_bar([y_main_s, y_main_adv], ["natural image", "adversarial example"], save_path="activations_kodak.pdf", sort=True, stack=True, vi=None)
+    # visualize only
+    y_main_s, y_main_adv, vi = torch.load("./attack/data/temp_mse.pt")
+    show_max_bar([y_main_s, y_main_adv], ["natural image", "adversarial example"], save_path="activations_kodak.pdf", sort=True, stack=True, vi=vi)
 
 def main(args):
     if args.quality > 0:

@@ -24,7 +24,6 @@ def plot_distrib_(ax, y_hat, y_hat_t, y_pred, y_pred_t, label, idx):
     
     y_hat_hist = y_hat.cpu().numpy()
     y_hat_t_hist = y_hat_t.cpu().numpy()
-    # print(y_hat_hist)
     x = np.linspace(v_min+0.5, v_max-0.5, bins)
     x_pred_fine = np.linspace(v_min+0.5, v_max-0.5, 100*bins)
     # print(v_min,v_max,x)
@@ -53,28 +52,30 @@ def plot_distrib_(ax, y_hat, y_hat_t, y_pred, y_pred_t, label, idx):
     # plt.close()
 
 def plot_distrib(ax, y_hat, y_pred, label=None, title=None, x_title=None):
+    fontsize = 4
     x = np.linspace(v_min+0.5, v_max-0.5, bins)
     x_pred_fine = np.linspace(v_min+0.5, v_max-0.5, 50*bins)
 
     y_hat_hist = y_hat.cpu().numpy()
     y_pred = y_pred.cpu().numpy()
-    ax.bar(x, y_hat_hist, label="gt")
-    ax.plot(x_pred_fine, y_pred, label=f"pred", color="black", linewidth=0.75)
-    ax.legend(fontsize=4)
-    ax.tick_params(axis='both', labelsize=4)
-    # ax.tight_layout()
-    ax.set_ylim(ymax=0.1)
     
-
-    # ax.xaxis.set_label_position('top')
-    if x_title:
-        ax.set_xlabel(x_title, fontsize=fontsize)
-    if title:
-        ax.set_title(title, fontsize=fontsize)
-    # ax.set_title(f"channel-{label}", loc="left", x=0.02, y=1, pad=-20)
-    ax.text(0.03, 0.95, f"channel-{label}", fontsize=4, ha='left', va='top', transform=ax.transAxes)
-        
+    ax.bar(x, y_hat_hist, label="gt", color="lightsteelblue")
+    ax.plot(x_pred_fine, y_pred, label=f"pred", color="blue", linewidth=1)
+    
+    ax.legend(fontsize=fontsize)
+    ax.tick_params(axis='both', labelsize=fontsize)
+    ax.set_ylim(ymax=0.1)
     ax.set_xticks(np.arange(min(x)+1, max(x), 2.0))
+    
+    ax.text(0.03, 0.95, f"channel-{label}", fontsize=fontsize, ha='left', va='top', transform=ax.transAxes)
+    # ax.set_title(f"channel-{label}", loc="left", x=0.02, y=1, pad=-20)
+    
+    # ax.xaxis.set_label_position('top')
+    # if x_title:
+    #     ax.set_xlabel(x_title, fontsize=fontsize)
+    # if title:
+    #     ax.set_title(title, fontsize=6)
+    # ax.tight_layout()
     # ax.autoscale(tight=True)
 
 def get_data(file, net):
@@ -107,7 +108,7 @@ if __name__ == "__main__":
     from matplotlib.font_manager import findfont, FontProperties
     font = findfont(FontProperties(family=['sans-serif']))
     print(font)
-    fontsize = 8
+    fontsize = 6
 
     with torch.no_grad():
         ckpt = args.checkpoint
@@ -191,7 +192,8 @@ if __name__ == "__main__":
     # plot 2*num_plot images
     num_plots = 3
     # fig = plt.figure(figsize=(20,8))
-    fig, axs = plt.subplots(2,num_plots,figsize=(3.5, 2.0), constrained_layout=True, sharex=True, sharey=True) # 3.5 inch for IEEE Trans
+    fig, axs = plt.subplots(2,num_plots,figsize=(3.6, 1.8), constrained_layout=True, sharex=True, sharey=True) # 3.5 inch for IEEE Trans
+    fig.set_constrained_layout_pads(w_pad=0.02, h_pad=0.02, hspace=0., wspace=0.)
     axs[0,0].set_ylabel(r"$\it{p}$ (natural)", fontsize=fontsize)
     axs[1,0].set_ylabel(r"$\it{p}$ (adv)", fontsize=fontsize)
     # subfigs = fig.subfigures(2, 1)
@@ -208,13 +210,13 @@ if __name__ == "__main__":
             if not args.adv:
                 # plot_distrib(ax, y_hat_hist[idx]/pixels, y_hat_t_hist[idx]/pixels, y_pred_base_ori_fine[idx], y_pred_base_adv_fine[idx], f"{idx}", i+1)
                 plot_distrib(axs[0,i], y_hat_hist[idx]/pixels, y_pred_base_ori_fine[idx], f"{idx}")
-                plot_distrib(axs[1,i], y_hat_t_hist[idx]/pixels, y_pred_base_adv_fine[idx], f"{idx}", x_title="latent activation")
+                plot_distrib(axs[1,i], y_hat_t_hist[idx]/pixels, y_pred_base_adv_fine[idx], f"{idx}")
                 plt.savefig("./logs/bitrate_baseline.pdf")
             else:
                 y_at_ori_hist = torch.histc(y_at_ori[idx], bins=bins, min=v_min, max=v_max)
                 y_at_adv_hist = torch.histc(y_at_adv[idx], bins=bins, min=v_min, max=v_max)
                 plot_distrib(axs[0,i], y_at_ori_hist/pixels, y_pred_at_ori_fine[idx], f"{idx}")
-                plot_distrib(axs[1,i], y_at_adv_hist/pixels, y_pred_at_adv_fine[idx], f"{idx}", x_title="latent activation")
+                plot_distrib(axs[1,i], y_at_adv_hist/pixels, y_pred_at_adv_fine[idx], f"{idx}")
                 plt.savefig("./logs/bitrate_at.pdf")
     #     figs_baseline = subfigs[0].subfigures(2, 1)
     #     ax_baseline = figs_baseline[0].subplots(1, num_plots)
