@@ -16,7 +16,6 @@ from utils import torch_msssim, ops
 from anchors import model as models
 from anchors import balle
 os.environ["TORCH_HOME"] = "./ckpts/torch/"
-from train import RateDistortionLoss
 
 
 def read_image(filename, padding=64):
@@ -154,7 +153,6 @@ def eval_result():
 @torch.no_grad()
 def code(args, net, input_file, out_file=None):
     net.eval()
-    # criterion = RateDistortionLoss()
     im, _, _ = read_image(input_file)
     im = im.to(args.device)
 
@@ -191,6 +189,7 @@ def config():
     parser.add_argument('-padmode',dest='padding_mode', type=str, default="reflect", help="pad mode")
     # attack config
     parser.add_argument('-steps',dest='steps',      type=int,   default=1001,  help="attack iteration steps")
+    parser.add_argument('-random',dest='random',    type=int,   default=1,  help="random start numbers")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
     parser.add_argument("-noise",dest="noise",      type=float, default=0.0001,  help="input noise threshold")
     
@@ -209,7 +208,13 @@ def config():
     parser.add_argument('--log',  dest='log', type=str, default="./logs/log.txt", help="log file")
     parser.add_argument('--debug',dest='debug', action='store_true')
     parser.add_argument('--no-clamp',dest='clamp', action='store_false')
+
+    parser.add_argument("-ssteps", dest="search_steps", type=int, default=20, help="binary search steps for CW")
+    parser.add_argument("-re", dest="recompress", type=int, default=None, help="recompress times")
+    
     parser.add_argument("--defend", action="store_true", help="defend mode")
+    parser.add_argument("--defend_m", dest="method", type=str, default="ensemble", help="defend method in ['ensemble', 'resize']")
+    parser.add_argument("-degrade", dest="degrade",  type=str, default=None, help="degrade method in ['deblur']")
     parser.add_argument("--fintune", action="store_true")
 
     return parser

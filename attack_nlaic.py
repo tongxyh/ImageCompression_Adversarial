@@ -9,8 +9,8 @@ from torch.utils.tensorboard import SummaryWriter
 import math
 import numpy as np
 from PIL import Image
-from thop import profile
-
+# from thop import profile
+from pytorch_msssim import ms_ssim
 # from utils import torch_msssim, ops
 import Model.model as model
 from Model.context_model import Weighted_Gaussian
@@ -212,18 +212,16 @@ def attack(args, image, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=Non
 
                 with torch.no_grad():
                     mse_in = torch.mean((im_in - im_s)**2)
-                    im_uint8 = torch.round(im_in * 255.0)/255.0
+                    msim_in = ms_ssim(im_in, im_s, data_range=1., size_average=True).item()
                     
+                    # save adverserial input
+                    im_uint8 = torch.round(im_in * 255.0)/255.0
                     # 1. NO PADDING
                     # im_uint8[:,:,H:,:] = 0.
                     # im_uint8[:,:,:,W:] = 0.
-                    
-                    # save adverserial input
                     im_ =  torch.clamp(im_uint8, min=0., max=1.0)
                     # print(torch.min(im_), torch.max(im_))
                     # im_ =  torch.clamp(im, min=0., max=1.0)
-                    # torch.set_printoptions(threshold=1000000)
-                    # print(im_)
                     fin = im_.data[0].cpu().numpy()
                     fin = np.round(fin * 255.0)
                     fin = fin.astype('uint8')
@@ -258,7 +256,10 @@ def attack(args, image, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=Non
 
     # original recons
     output_ = torch.clamp(output_s, min=0., max=1.0)
+
     mse_out = torch.mean((output_s - output)**2)
+    msim_out = ms_ssim(output_s, output, data_range=1., size_average=True).item()
+
     out = output_.data[0].cpu().numpy()
     out = np.round(out * 255.0)
     out = out.astype('uint8')
@@ -267,7 +268,7 @@ def attack(args, image, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=Non
     img = Image.fromarray(out[:H, :W, :])
     img.save("./attack/kodak/origin_out.png")
     
-    return bpp_ori, bpp, 10*math.log10(mse_out/mse_in)
+    return bpp_ori, bpp, 10*math.log10(mse_out/mse_in), 10. * math.log10((1-msim_out)/(1-msim_in))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -303,13 +304,14 @@ if __name__ == "__main__":
     # print("[CONTEXT]:", args.context)
     print("==== Loading Checkpoint:", checkpoint, '====')
     images = sorted(glob(args.source))
-    bpp_ori_, bpp_, vi_ = 0., 0., 0.
+    bpp_ori_, bpp_, vi_, vi_msim_ = 0., 0., 0., 0.
     for image in images:
-        bpp_ori, bpp_adv, vi = attack(args, image, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
+        bpp_ori, bpp_adv, vi, vi_msim = attack(args, image, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
         print(image, bpp_ori, bpp_adv, vi)
         bpp_ori_ += bpp_ori
         bpp_ += bpp_adv
         vi_ += vi
-    bpp_ori, bpp, vi = bpp_ori_/len(images), bpp_/len(images), vi_/len(images)
+        vi_msim_ += vi_msim
+    bpp_ori, bpp, vi, vi_msim = bpp_ori_/len(images), bpp_/len(images), vi_/len(images), vi_msim_/len(images)
     dbpp = (bpp-bpp_ori)/bpp_ori
-    print("AVG:", args.quality, bpp_ori.item(), bpp.item(), dbpp.item(), vi)
+    print("AVG:", args.quality, bpp_ori.item(), bpp.item(), dbpp.item(), vi, vi_msim)

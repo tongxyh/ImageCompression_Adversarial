@@ -31,8 +31,9 @@ if __name__ == "__main__":
     max_kodak, min_kodak = [AverageMeter() for i in range(2)]
     images = glob(args.source)
     index_max_, index_min_, index_abs_max_ = [], [], []
+
     for i, image in enumerate(images):
-        print(i)
+        # print(i)
         if i > 10000:
             break
         args.source = image
@@ -61,8 +62,8 @@ if __name__ == "__main__":
     # channel_max = torch.amax(index_max_, dim=0)[:,0,0] 
     # channel_min = torch.amin(index_min_, dim=0)[:,0,0] # [C]
     # print(channel_max.size())
-    channel_max = index_max_.topk(k=100, dim=0)[0][-1,:,0,0]
-    channel_min = index_min_.topk(k=100, dim=0, largest=False)[0][-1,:,0,0]
+    channel_max = index_max_.topk(k=100, dim=0)[0][-1,:,0,0] # positive boundary
+    channel_min = index_min_.topk(k=100, dim=0, largest=False)[0][-1,:,0,0] # negetive boundary
     # print(channel_max.size())
     print(channel_max, channel_min)
     profile = f'{args.model}-{args.metric}-{args.quality}'

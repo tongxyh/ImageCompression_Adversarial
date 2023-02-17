@@ -24,7 +24,6 @@ from anchors import balle
 from utils import torch_msssim, ops
 from anchors import model as models
 from anchors.utils import layer_compare
-# from self_ensemble import eval
 
 torch.manual_seed(0)
 np.random.seed(0)
@@ -39,20 +38,6 @@ def eval(im_adv, im_s, output_s, net, args):
     # im_uint8 = torch.round(im_adv * 255.0)/255.0
     # im_ =  torch.clamp(im_uint8, min=0., max=1.0)
     im_ = torch.clamp(im_adv, min=0., max=1.0)
-
-    # version major_revision: input pertubation level control
-    noise = im_ - im_s
-    max_n = torch.abs(noise).max()
-    min_n = 0.
-    while torch.abs(min_n - max_n) > 1/256:
-        noise_ = torch.mean(torch.clamp(noise, min=-(max_n+min_n)/2, max=(max_n+min_n)/2)**2)
-        if noise_ > args.noise:
-            max_n = (max_n+min_n)/2
-        else:
-            min_n = (max_n+min_n)/2
-        # print(min_n, max_n)
-    im_ = im_s + torch.clamp(noise, min=-max_n, max=max_n)
-    # version major_revision
 
     # save adverserial input
     # coder.write_image(im_, "%s_advin_%d_%0.8f.png"%(filename, i, loss.item()), H, W)
@@ -153,8 +138,7 @@ def search_noise(im_s, output_s, net, noise_level):
     # loss_i = 0
     loss_i = torch.Tensor([0.])
     # while abs(c_r - c_l) > 0.0001 and (abs(c_r - c_l) > 0.01 or torch.abs(loss_i - args.noise) > args.noise*0.01):    
-    # while abs(c_r - c_l) > 0.0001 and (abs(c_r - c_l) > 0.01 or torch.abs( 1 - loss_o - 0.99*noise_level) > noise_level*0.01): # first submit version
-    for _ in range(args.search_steps):    
+    while abs(c_r - c_l) > 0.0001 and (abs(c_r - c_l) > 0.01 or torch.abs( 1 - loss_o - 0.99*noise_level) > noise_level*0.01): 
         for i in range(args.steps):
             noise_clipped = ops.Up_bound.apply(ops.Low_bound.apply(noise, -noise_range), noise_range)
             # if args.pad:
@@ -257,9 +241,9 @@ def attack_(im_s, net, args):
             min_noise = noise_level
         noise_level = (min_noise + max_noise)/2
         search_cnt += 1
-    t_ = time.time()  
+        
     im_adv, output_adv, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args) 
-    # print("Eval Time:", time.time()-t_)    
+        
     return im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi
 
 class attacker:
@@ -308,7 +292,7 @@ class attacker:
 def batch_attack(args):    
     myattacker = attacker(args)
     images = sorted(glob(args.source))
-    bpp_ori_, bpp_, vi_, t_ = 0., 0., 0., 0.
+    bpp_ori_, bpp_, vi_ = 0., 0., 0.
     if args.debug:
         # distribution visulization
         y_main_s, y_main_adv = [], []
@@ -325,9 +309,8 @@ def batch_attack(args):
         bpp_ori_ += bpp_ori
         bpp_ += bpp
         vi_ += vi
-        t_ += end - start
-    bpp_ori, bpp, vi, t = bpp_ori_/len(images), bpp_/len(images), vi_/len(images), t_/len(images)
-    print("AVG:", args.quality, bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi, t)
+    bpp_ori, bpp, vi = bpp_ori_/len(images), bpp_/len(images), vi_/len(images)
+    print("AVG:", args.quality, bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi)
     # if args.debug:
     #     y_main_s = torch.mean(torch.abs(torch.cat(y_main_s, dim=0)), dim=0, keepdim=True)
     #     y_main_adv = torch.mean(torch.abs(torch.cat(y_main_adv, dim=0)), dim=0, keepdim=True)

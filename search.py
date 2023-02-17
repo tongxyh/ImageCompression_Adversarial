@@ -142,7 +142,10 @@ def detect(y_main):
 
     err_max = torch.clamp(index_max - channel_max, min=0.0)
     err_min = torch.clamp(index_min - channel_min, max=0.0)
-    return torch.mean(err_max**2) + torch.mean(err_min**2)
+
+    return torch.max(err_max/(channel_max+1)) + torch.max(torch.abs(err_min/(channel_min+1)))
+    # return torch.mean(err_max/(channel_max+1)) + torch.mean(torch.abs(err_min/(channel_min+1)))
+    # return torch.mean(err_max**2) + torch.mean(err_min**2)
 
 @torch.no_grad()
 def eval(image, net, score_best):
@@ -156,12 +159,12 @@ def eval(image, net, score_best):
     y_main = net.g_a(im_)
     score = detect(y_main)
     if score > score_best:
-        print(image, score_best)
-        print("FIND YOU!", image, score)
+        # print(image, score_best)
+        print("FOUND YOU!", image, score)
         result = net(im_)
         x_hat = result["x_hat"]
         coder.write_image(im_s, save_path+filename)
-        coder.write_image(torch.clamp(x_hat, min=0., max=1.0), save_path+filename[:-4]+f"_{score}.png")
+        coder.write_image(torch.clamp(x_hat, min=0., max=1.0), save_path+filename[:-4]+f"_{score:.4f}.png")
         score_best = score
          
     # if args.defend:
@@ -187,8 +190,6 @@ def batch_test(args):
     net = coder.load_model(args, training=False)
     for i, image in enumerate(images):    
         score_best = eval(image, net, score_best)
-
-    
 
 def main(args):
     if args.quality > 0:

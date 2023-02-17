@@ -18,9 +18,21 @@ from torchvision import transforms
 from pytorch_msssim import MS_SSIM
 from utils import ops
 
-
 import coder
 from attack_rd import attack_
+
+
+def recompress(net, im0, im1):
+    # net.eval()
+    # for _ in range(repeat_times):
+    #     output = net(im)
+    #     im = output["x_hat"]
+    lamb2 = 0.01
+    f0 = net.g_a(im0)
+    f1 = net.g_a(im1)
+    loss_f1 = torch.sqrt(torch.sum((f0 - f1)**2))
+    # loss_f1 = torch.mean((f0 - f1)**2)
+    return loss_f1 * lamb2
 
 class RateDistortionLoss(nn.Module):
     """Custom rate distortion loss with a Lagrangian parameter."""
@@ -39,10 +51,18 @@ class RateDistortionLoss(nn.Module):
         N, _, H, W = target.size()
         out = {}
         num_pixels = N * H * W
-        out["bpp_loss"] = sum(
-                (torch.log(likelihoods).sum() / (-math.log(2) * num_pixels))
-                for likelihoods in output["likelihoods"].values()
-            )
+        
+        # out["bpp_loss"] = sum(
+        #         (torch.log(likelihoods).sum() / (-math.log(2) * num_pixels))
+        #         for likelihoods in output["likelihoods"].values()
+        #     )
+        
+        bpp = 0.
+        for likelihoods in output["likelihoods"].values():
+            likelihoods = torch.clamp(likelihoods, min=1./65536)
+            bpp += torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)
+        out["bpp_loss"] = bpp
+        
         # output["x_hat"] = ops.Low_bound.apply(ops.Up_bound.apply(output["x_hat"],1.))
         if not training:
             output["x_hat"] = torch.clamp(output["x_hat"],min=0.,max=1.)
@@ -55,8 +75,8 @@ class RateDistortionLoss(nn.Module):
             # if args.adv:
             #         out["bpp_loss"] = out["bpp_loss"] * 0.
             lamb_r = 1
-            if self.lmbda == 100 or 1:
-                # print("[WARNING] Inf Mode")
+            if self.lmbda == 100:
+                print("[WARNING] Inf Mode")
                 lamb_r = 0
             if self.metric == "mse":
                 out["distortion_loss"] = self.mse(output["x_hat"], target)
@@ -183,6 +203,9 @@ def test_epoch(epoch, test_dataloader, model, criterion, log_dir, args):
     aux_loss = AverageMeter()
     msim_loss = AverageMeter()
     d_loss = AverageMeter()
+    
+    if args.recompress:
+        f1_loss = AverageMeter()
     if args.adv:
         vi_loss = AverageMeter()
 
@@ -190,8 +213,9 @@ def test_epoch(epoch, test_dataloader, model, criterion, log_dir, args):
         d = d.to(device)
         if args.adv:
             noise = args.noise
-            args.noise = 0.0001
-            vi_loss.update(attack_(d, model, args)[-1])
+            args.noise = 0.0001 # force input pertubation level to 1e-4
+            vi_results = attack_(d, model, args)[-1]
+            vi_loss.update(vi_results["vi"])
             args.noise = noise
         else:
             with torch.no_grad():
@@ -200,12 +224,17 @@ def test_epoch(epoch, test_dataloader, model, criterion, log_dir, args):
                 out_criterion = criterion(out_net, d, training=True)
                 aux_loss.update(model.aux_loss())
                 bpp_loss.update(out_criterion["bpp_loss"])
-                loss.update(out_criterion["loss"])
+                if args.recompress:
+                    loss_f1 = recompress(model, d, out_net["x_hat"])
+                    f1_loss.update(loss_f1)
+                    loss.update(out_criterion["loss"] + loss_f1)
+                else:
+                    loss.update(out_criterion["loss"])
                 d_loss.update(out_criterion["distortion_loss"])
     
     # TODO: write to log
     # log = f"Test epoch {epoch}: Average losses:\tLoss: {loss.avg:.4f} |\tMSE loss: {mse_loss.avg:.6f} |\tMS-SSIM loss: {msim_loss.avg:.4f} |\tBpp loss: {bpp_loss.avg:.3f}\n"
-    log = f"Test epoch {epoch}: Average losses:\tLoss: {loss.avg:.4f} |\tMSE loss: {d_loss.avg:.6f} |\tBpp loss: {bpp_loss.avg:.3f}\n"
+    log = f"Test epoch {epoch}: Average losses:\tLoss: {loss.avg:.4f} |\tMSE loss: {d_loss.avg:.6f} |\tBpp loss: {bpp_loss.avg:.3f} |\tRecomp loss: {f1_loss.avg:.3f}\n"
     with open(log_dir, "a") as f:
         f.write(log)
     
@@ -252,12 +281,20 @@ def train(args):
         noise_range = args.noise
         model_dir += f"-{args.noise}-{args.steps}"
         ckpt_dir = f"./ckpts/adv/{model_dir}"
+    elif args.recompress:
+        model_dir += f"-x{args.recompress}"
+        ckpt_dir = f"./ckpts/recompress/{model_dir}"
     else:
         ckpt_dir = f"./ckpts/anchor/{model_dir}"
 
     if not os.path.exists(ckpt_dir):
         os.makedirs(ckpt_dir)
-    train_data = '/workspace/dataset/vimeo'
+    # train_data = '/workspace/dataset/vimeo'
+    if args.debug:
+        epochs_num = 10
+        train_data = '/workspace/ct/datasets/vimeo/debug'
+    else:
+        train_data = '/workspace/ct/datasets/vimeo'
     print("Save ckpts to:", ckpt_dir)
     print("Load train data:", train_data)
     # with open(f"{ckpt_dir}/log.txt", "w") as f:
@@ -275,7 +312,8 @@ def train(args):
     if args.adv:
         N_ADV = 0
         print(batch_size - N_ADV, "adv examples in all", batch_size)
-    
+    if args.recompress:
+        print("Train with recompression loss")
     # confirm = input("Do you confirm the settings? (y or n)")
     # if confirm:
     #     pass
@@ -289,15 +327,19 @@ def train(args):
     for epoch in range(last_epoch, epochs_num):
         t = time.time()
         for step, batch_x in enumerate(train_dataloader):
-            # optimizer.zero_grad()
-            # aux_optimizer.zero_grad()
+            optimizer.zero_grad()
+            aux_optimizer.zero_grad()
 
             batch_x = batch_x.to('cuda')
-                        
+            if args.recompress:
+                # batch_x = recompress(batch_x, image_comp, args.recompress)
+                # image_comp.train()
+                pass
+                
             if args.adv:   
                 im_s = batch_x[N_ADV:,:,:,:]
                 batch_x = batch_x.detach()
-                if step <=100:
+                if step <= 100:
                     args.noise = noise_range * step/100
                 optimizer.zero_grad()
                 aux_optimizer.zero_grad()
@@ -328,9 +370,32 @@ def train(args):
                     aux_optimizer.step()
             else:
                 image_comp.train()
-                result = image_comp(batch_x)
+                # result = image_comp(batch_x)
+                
+                y = image_comp.g_a(batch_x)
+                z = image_comp.h_a(torch.abs(y))
+                z_hat, z_likelihoods = image_comp.entropy_bottleneck(z)
+                scales_hat = image_comp.h_s(z_hat)
+                y_hat, y_likelihoods = image_comp.gaussian_conditional(y, scales_hat)
+                x_hat = image_comp.g_s(y_hat)
+
+                result = {
+                    "x_hat": x_hat,
+                    "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
+                }
+        
                 out_criterion = criterion(result, batch_x)
-                out_criterion["loss"].backward()
+                if args.recompress:
+                    lamb2 = 0.01
+                    # f0 = image_comp.g_a(batch_x)
+                    f1 = image_comp.g_a(result["x_hat"])
+
+                    loss_f1 = torch.sqrt(torch.sum((y - f1)**2))
+                    # loss_f1 = torch.mean((y - f1)**2)
+                    loss = out_criterion["loss"] + lamb2 * loss_f1
+                    loss.backward()
+                else:
+                    out_criterion["loss"].backward()
                 torch.nn.utils.clip_grad_norm_(image_comp.parameters(), 1.0)
                 optimizer.step()
             
@@ -343,7 +408,30 @@ def train(args):
             #     result = image_comp(batch_adv)
             #     out_criterion = criterion(result, batch_x)
             #     print("After:", out_criterion["distortion_loss"].item())
-
+            if args.recompress:
+                if step%1000 == 0 and step > 0:
+                    loss = test_epoch(epoch, test_dataloader, image_comp, criterion, f"{ckpt_dir}/log.txt", args)
+                    print(f"====> {step}/20000", loss)
+                    lr_scheduler.step(loss)
+                    is_best = loss < best_loss
+                    best_loss = min(loss, best_loss)
+                    if is_best or step%10000 == 0:
+                        print("Get New Best at:", step, loss)
+                        save_checkpoint(
+                        {
+                            "epoch": epoch,
+                            "step": step,
+                            "state_dict": image_comp.state_dict(),
+                            "loss": loss,
+                            "optimizer": optimizer.state_dict(),
+                            "aux_optimizer": aux_optimizer.state_dict(),
+                            "lr_scheduler": lr_scheduler.state_dict(),
+                        },
+                        is_best, ckpt_dir, filename=f"{ckpt_dir}/ckpt-{epoch}-{step}.pth.tar"
+                        )
+                # if step == 20000:
+                #     print("====> training finished!")
+                #     return
             if args.adv: 
                 if step%10 == 0 and step > 0:
                     # for i in range(N_ADV, batch_size):
@@ -370,7 +458,8 @@ def train(args):
                         )
                 if step == 2000:
                     return
-            elif step%10000 == 0:
+
+            elif step%10000 == 0 and step > 0:
                 print('step:', step, 'loss:', out_criterion["loss"].item(), "distortion:", out_criterion["distortion_loss"].item(), 'rate:', out_criterion["bpp_loss"].item(), f"lr: {optimizer.param_groups[0]['lr']}", "Epoch Time:", time.time() - t)
                 # torch.save(image_comp.module.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.8f_%0.8f.pkl' % (epoch, step, loss_epoch/(step+1), bpp_epoch/(step+1))))
                 # torch.save(image_comp.state_dict(), os.path.join(ckpt_dir,'ae_%d_%d_%0.4f_%0.8f_%0.8f.pkl' % (epoch, step, bpp_sum/(step+1), dloss_sum/(step+1), loss_sum/(step+1))))

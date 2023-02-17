@@ -16,12 +16,14 @@ import numpy as np
 from PIL import Image
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
+from pytorch_msssim import ms_ssim
 
 import coder
 from anchors import balle
 from utils import torch_msssim, ops
 from anchors import model as models
 from anchors.utils import layer_compare
+from self_ensemble import eval, defend
 
 
 def entropy(net, y_main, model="hyper"):
@@ -68,19 +70,6 @@ def clamp_value_naive(args, y_main):
     # y_main = torch.where(y_main > index_max, index_max, y_main)
     # y_main = torch.where(y_main < index_min, index_min, y_main)
     return y_main
-
-def anti_noise(x, scale=0.5):
-    # #up/down sample
-    print("resize bicubic")
-    x_down = F.interpolate(x, scale_factor=scale, mode="bicubic", align_corners=False, antialias=True)
-    # x_down = F.interpolate(x, scale_factor=scale, mode="nearest")
-    x_up = F.interpolate(x_down, scale_factor=1/scale, mode="bicubic", align_corners=False, antialias=True)
-    x_res = x - x_up
-
-    # coder.write_image(x_res+0.5, "./logs/resize_nearst_high.png", H=x.shape[2], W=x.shape[3])
-    # coder.write_image(x_up, "./logs/resize_nearst_low.png", H=x.shape[2], W=x.shape[3])
-    return x_up
-    #  return F.interpolate(x_down, scale_factor=1/scale, mode="bicubic", align_corners=False, antialias=True)
 
 def self_ensemble(net, x):
     x0 = torch.flip(x, [2])
@@ -214,30 +203,7 @@ def show_max_bar(data, labels, save_path, sort=True, stack=False, vi=None):
     # ax.plot(ax_x, maxs[0[].detach().cpu().numpy(), label=labels[0], linewidth=0.5)
     # plot_bar(ax, ax_x, maxs, labels, save_path, stack)
 
-def clip_dead_channel(y_main, profile):
-    dead_channels = torch.load(profile)["dead"]
-    ranks_max, ranks_min = torch.load(profile)["rank"]
-    y_main_ = torch.zeros_like(y_main)
-    
-    rank = torch.argsort(torch.amax(torch.abs(y_main), dim=(2,3)), dim=1, descending=True) # sort by 
-    rank_ = torch.zeros_like(rank)
-    for j in range(rank.shape[1]):
-        # print(j,rank[0,j])
-        rank_[0, rank[0,j]] = j
-
-    index_abs_max = torch.amax(torch.abs(y_main), dim=(2,3), keepdim=True)
-    for index in range(y_main_.shape[1]):
-        if index in dead_channels:
-            y_main_[:,index,:,:] = torch.clamp(y_main[:,index,:,:], min=-1.5, max=1.5)
-        elif rank_[0, index] < ranks_min[index]-100:
-            if args.debug:
-                print(index, rank_[0, index], ranks_min[index], ranks_max[index])   
-            y_main_[:,index,:,:] = torch.clamp(y_main[:,index,:,:], min=-index_abs_max[0,ranks_min[index],0,0].item(), max=index_abs_max[0,ranks_min[index],0,0].item())
-        else:
-            y_main_[:,index,:,:] = y_main[:,index,:,:]
-    return y_main_
-
-def defend(y_main, args):
+def defend_(y_main, args):
     # if args.adv:
     #     profile = f"{args.model}-{args.metric}-{args.quality}-adv.pt"
     # else:
@@ -264,7 +230,7 @@ def crop(x, padding):
     return x[:,:,padding:-padding,padding:-padding]
 
 @torch.no_grad()
-def eval(im_adv, im_s, output_s, net, args):
+def eval_(im_adv, im_s, output_s, net, args):
     net.eval()
     # im_uint8 = torch.round(im_adv * 255.0)/255.0
     # im_ =  torch.clamp(im_uint8, min=0., max=1.0)
@@ -292,12 +258,14 @@ def eval(im_adv, im_s, output_s, net, args):
         # result["likelihoods"]["z"] = crop(result["likelihoods"]["z"], padding_z)
     
     mse_in = torch.mean((im_ - im_s)**2)
+    msim_in = ms_ssim(im_, im_s, data_range=1., size_average=True).item()
     if args.defend:
         y_main = net.g_a(im_)  
         y_main = defend(y_main, args)
         _, _, result["likelihoods"] = models.entropy_estimator(y_main, net, args.model)
         x_ = net.g_s(torch.round(y_main))
         output_ = torch.clamp(x_, min=0., max=1.0)
+
     else:
         if args.clamp:
             output_ = torch.clamp(x_hat, min=0., max=1.0)
@@ -337,15 +305,22 @@ def eval(im_adv, im_s, output_s, net, args):
     # bpp +=torch.log(result["likelihoods"]["z"]).sum() / (-math.log(2) * num_pixels)
 
     mse_out = torch.mean((output_ - output_s)**2)
+    msim_out = ms_ssim(output_, output_s, data_range=1., size_average=True).item()
     if mse_in > 1e-20 and mse_out > 1e-20:
         vi = 10. * math.log10(mse_out/mse_in)
+        if not args.adv:
+            vi_msim = 10. * math.log10((1-msim_out)/(1-msim_in))
+        else:
+            vi_msim = None
     else:
-        vi = None
+        vi, vi_msim = None, None
         print(f"[!] Warning: mse_in ({mse_in}) or mse_out {mse_out} is zero")
-    if args.debug:
+    if args.debug and vi:
         print("loss_rec:", mse_out.item(), "loss_in:", mse_in.item(), "VI (mse):", vi)
-    # MS-SSIM
-    return im_, output_, bpp, mse_in, mse_out, vi
+        print("MS-SSIM results:", msim_in, msim_out, -10. * math.log10(1-msim_in), -10. * math.log10(1-msim_out))
+    mse_results = {"mse_in": mse_in, "mse_out": mse_out}
+    vi_results = {"vi": vi, "vi_msim": vi_msim}
+    return im_, output_, bpp, mse_results, vi_results
 
 def attack_onestep(im_s, net):
     # TODO: FreeAT
@@ -356,7 +331,10 @@ def attack_onestep(im_s, net):
 def attack_our(im_s, output_s, im_in, net, args):
     loss_i = torch.mean((im_s - im_in) ** 2)
     if loss_i > args.noise:
-        loss = loss_i
+        if args.att_metric == "ms-ssim":
+            loss = 1. - ms_ssim(im_s, im_in, data_range=1.0, size_average=True)
+        if args.att_metric == "L2":
+            loss = loss_i
         loss_o = torch.Tensor([0.])
     else:
         # if args.pad:
@@ -378,9 +356,11 @@ def attack_our(im_s, output_s, im_in, net, args):
 
         # output_[:,:,H:,:] = 0.
         # output_[:,:,:,W:] = 0.
-
-        # if LOSS_FUNC == "L2":
-        loss_o = 1. - torch.mean((output_s - output_) * (output_s - output_)) # MSE(x_, y_)
+        LOSS_FUNC = args.att_metric
+        if LOSS_FUNC == "ms-ssim":
+            loss_o = ms_ssim(output_, output_s, data_range=1.0, size_average=True)
+        if LOSS_FUNC == "L2":
+            loss_o = 1. - torch.mean((output_s - output_) * (output_s - output_)) # MSE(x_, y_)
             # loss_o = 1. - (output_s - output_) ** 2
         # if LOSS_FUNC == "L1":
         #     loss_o = 1.0 - torch.mean(torch.abs(im_s - output_))
@@ -452,13 +432,11 @@ def attack_(im_s, net, args):
             # show_max_bar([y_main_s, y_main_low] , ["origin", "low frequency", "high frequency"], save_path="low_freq.pdf", sort=True)
             # show_max_bar([y_main_s, y_main_high - y_main_anchor] , ["origin", "high frequency"], save_path="high_freq.pdf", sort=True)
 
-            y_main_ = defend(y_main_s, args)
-            
+            # y_main_ = defend(y_main_s, args)
             # show_max_bar(y_main, y_main_, label_a="origin", label_b="downsampled", save_path="origin.pdf")
-
-            x_ = net.g_s(torch.round(y_main_))
-            psnr = -10*math.log10(torch.mean((x_ - im_s)**2)) 
-            print("PSNR after clipping:", psnr)
+            # x_ = net.g_s(torch.round(y_main_))
+            # psnr = -10*math.log10(torch.mean((x_ - im_s)**2)) 
+            # print("PSNR after clipping:", psnr)
         
         # index_c = torch.ones_like(y_main)            
         # for i in range(y_main.shape[1]):
@@ -508,7 +486,8 @@ def attack_(im_s, net, args):
     noise_range = args.epsilon/255.0
     epsilon = args.noise
     noise = torch.zeros(im_s.size())
-    # noise = torch.Tensor(im_s.size()).uniform_(-1e-2,1e-2)
+    if args.random > 1:
+        noise = torch.Tensor(im_s.size()).uniform_(-1e-2,1e-2)
     noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
     optimizer = torch.optim.Adam([noise], lr=args.lr_attack)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)
@@ -563,14 +542,13 @@ def attack_(im_s, net, args):
             # print("[WARNING] No learning rate decay")
             if args.debug:
                 # print(im_s.shape, output_s.shape)
-                _, _, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args)    
+                _, _, bpp, mse, vi = eval(im_in, im_s, output_s, net, args)    
                 net = net.train()
                 # coder.write_image(output_, "%s_out_%d_%0.8f.png"%(filename, i, loss.item()), H, W)
     # noise = noise_clipped
+    im_adv, output_adv, bpp, mse_results, vi_results = eval(im_in, im_s, output_s, net, args) 
 
-    im_adv, output_adv, bpp, mse_in, mse_out, vi = eval(im_in, im_s, output_s, net, args) 
-        
-    return im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi
+    return im_adv, output_adv, output_s, bpp_ori, bpp, mse_results, vi_results
 
 class attacker:
     def __init__(self, args):
@@ -596,19 +574,19 @@ class attacker:
             self.y_main_s = self.net.g_a(im_s)
         
         # mean_s = torch.mean(torch.abs(y_main_s), dim=(0,2,3))
-        image_dir = "./attack/kodak/"
+        image_dir = "./attack/major_tcsvt/"
         filename = image_dir + self.model_config + image_file.split("/")[-1][:-4]
-        im_adv, output_adv, output_s, bpp_ori, bpp, mse_in, mse_out, vi = attack_(im_s, self.net, args)
+        im_adv, output_adv, output_s, bpp_ori, bpp, mse_results, vi_results = attack_(im_s, self.net, args)
         self.noise = im_adv - im_s + 0.5
         if self.args.target:
-            print("%s_advin_%s.png"%(filename, self.args.target))
+            # print("%s_advin_%s.png"%(filename, self.args.target))
             coder.write_image(im_adv, "%s_advin_%s.png"%(filename, self.args.target))
             coder.write_image(torch.clamp(im_adv-im_s + 0.5, min=0., max=1.), "%s_noise_%s.png"%(filename, self.args.target))
             coder.write_image(output_adv, "%s_advout_%s.png"%(filename, self.args.target))
         if self.args.debug:
-            coder.write_image(im_adv, "%s_advin_%0.8f.png"%(filename, mse_in.item()))
-            coder.write_image(output_adv, "%s_advout_%0.8f.png"%(filename, mse_out.item()))
-            coder.write_image(torch.clamp(im_adv-im_s + 0.5, min=0., max=1.), "%s_noise_%0.8f.png"%(filename, mse_out.item()))
+            coder.write_image(im_adv, "%s_advin_%0.8f.png"%(filename, mse_results["mse_in"].item()))
+            coder.write_image(output_adv, "%s_advout_%0.8f.png"%(filename, mse_results["mse_out"].item()))
+            # coder.write_image(torch.clamp(im_adv-im_s + 0.5, min=0., max=1.), "%s_noise_%0.8f.png"%(filename, mse_out.item()))
             self.net.eval()
             
             # Channel-wise Activation Visualization
@@ -619,8 +597,11 @@ class attacker:
                 show_max_bar([self.y_main_s, self.y_main_adv], ["natural example", "adversarial example"], save_path="activations.pdf", sort=True, vi=vi)
                 
             if self.args.defend:
-                y_main_adv_defend = defend(self.y_main_adv, self.args) 
-                show_max_bar([self.y_main_s, self.y_main_adv, y_main_adv_defend], ["origin", "adv", "defend"], save_path="activations_defend.pdf", sort=True) 
+                _, x_in, x_out, _ = defend(net, x, method=args.method)
+                
+                # y_main_adv_defend = defend(self.y_main_adv, self.args) 
+                # show_max_bar([self.y_main_s, self.y_main_adv, y_main_adv_defend], ["origin", "adv", "defend"], save_path="activations_defend.pdf", sort=True) 
+                
                 # mean_adv = torch.mean(torch.abs(y_main_adv), dim=(0,2,3))
                 # show y_main and y_main_adv in bar
                 # reorder max_adv with the same order as max_s
@@ -628,12 +609,12 @@ class attacker:
                 # max_s = torch.sort(max_s, descending=True)[0]
                 # max_adv = torch.sort(max_adv, descending=True)[0]
                 # plot_bar([mean_s, mean_adv], ["origin", "adv"], "means.pdf")
-        return bpp_ori.item(), bpp.item(), vi
+        return bpp_ori.item(), bpp.item(), vi_results
 
 def batch_attack(args):    
     myattacker = attacker(args)
     images = sorted(glob(args.source))
-    bpp_ori_, bpp_, vi_ = 0., 0., 0.
+    bpp_ori_, bpp_, vi_, vi_msim_, t_ = 0., 0., 0., 0., 0.
     if args.debug:
         # distribution visulization
         y_main_s, y_main_adv = [], []
@@ -641,17 +622,28 @@ def batch_attack(args):
     for i, image in enumerate(images):
         # evaluate time of each attack
         start = time.time()
-        bpp_ori, bpp, vi = myattacker.attack(image, crop=None)
+
+        vi_best = -1.
+        for random_idx in range(args.random):
+            bpp_tmp, bppadv_tmp, vi_results_ = myattacker.attack(image, crop=None)
+            # print(random_idx, vi_results["vi"])
+            if vi_results_["vi"] > vi_best: # select the best one
+                vi_best = vi_results_["vi"]
+                bpp_ori, bpp, vi_results = bpp_tmp, bppadv_tmp, vi_results_
+
         end = time.time()
         if args.debug:
             y_main_s.append(myattacker.y_main_s)
             y_main_adv.append(myattacker.y_main_adv)
-        print(image, bpp_ori, bpp, vi, "Time:", end-start)
+        print(image, bpp_ori, bpp, vi_results["vi"], vi_results["vi_msim"], "Time:", end-start)
         bpp_ori_ += bpp_ori
         bpp_ += bpp
-        vi_ += vi
-    bpp_ori, bpp, vi = bpp_ori_/len(images), bpp_/len(images), vi_/len(images)
-    print("AVG:", args.quality, bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi)
+        vi_ += vi_results["vi"]
+        vi_msim_ += vi_results["vi_msim"]
+        t_ += end - start
+    num_im = len(images)
+    bpp_ori, bpp, vi, vi_msim, t = bpp_ori_/num_im, bpp_/num_im, vi_/num_im,  vi_msim_/num_im, t_/num_im
+    print(f"AVG: {args.model}-{args.metric}-{args.quality}", bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi, vi_msim, t)
     if args.debug:
         # y_main_s = torch.mean(torch.abs(torch.cat(y_main_s, dim=0)), dim=0, keepdim=True)
         # y_main_adv = torch.mean(torch.abs(torch.cat(y_main_adv, dim=0)), dim=0, keepdim=True)

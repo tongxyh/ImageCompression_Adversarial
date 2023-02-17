@@ -39,27 +39,30 @@ if __name__ == "__main__":
 
     # generate noise on source image A
     # bpp_ori, bpp, vi = myattacker.attack(args.source2)
-    images_ = glob(args.source2)
+    images_ = sorted(glob(args.source2))
     vis = torch.zeros(24,24)
     print(vis.shape)
     for i, source in enumerate(images_):
         im_s, H, W = coder.read_image(source)
         im_s = im_s.to(args.device)
-        im_adv, output_adv, output_s, _, _, _, _, vi = attack_(im_s, net, args)
+        im_adv, output_adv, output_s, _, _, _, vi_results = attack_(im_s, net, args)
         noise = im_adv - im_s
         # mse_in = torch.mean(noise**2)
         # print(vi)
-        if args.debug:
-            coder.write_image(im_adv, "before_transfer_in.png")
-            coder.write_image(output_adv, "before_transfer_out.png")
-            coder.write_image(noise+0.5, "noise.png")
+        
+        coder.write_image(im_adv, "attack/major_tcsvt/before_transfer_in.png")
+        coder.write_image(output_adv, "./attack/major_tcsvt/before_transfer_out.png")
+        coder.write_image(noise+0.5, "./attack/major_tcsvt/noise.png")
+
         # add noise to source image B
-        images = glob(args.source)
+        images = sorted(glob(args.source))
         for j, image in enumerate(images):
             mse_in, output_adv, output_s = test(net, image, noise)
             mse_out = torch.mean((output_adv - output_s)**2)
             print(10*math.log10(mse_out/mse_in))
             vis[i,j] = 10*math.log10(mse_out/mse_in)
+
+            coder.write_image(output_adv, "./attack/major_tcsvt/after_transfer_out.png")
             # if args.debug:
             #     print(metrics)
         # print(metrics["bpp_loss"], metrics["mse_loss"], metrics["psnr"], metrics["msim_loss"], metrics["msim_dB"])
