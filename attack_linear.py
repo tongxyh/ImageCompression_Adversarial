@@ -25,7 +25,6 @@ from anchors import model as models
 from anchors.utils import layer_compare
 from self_ensemble import eval, defend
 
-torch.set_default_dtype(torch.float32)
 
 def entropy(net, y_main, model="hyper"):
     z = net.h_a(y_main)
@@ -405,10 +404,7 @@ def attack_(im_s, net, args):
         else:
             result = net(im_s)
         if not args.pad:
-            if args.clamp:
-                output_s = torch.clamp(result["x_hat"], min=0., max=1.0)
-            else:
-                output_s = result["x_hat"]
+            output_s = torch.clamp(result["x_hat"], min=0., max=1.0)
         else:
             # result = models.compressor(im_s, net, args.model)
             # y_hat = torch.nn.functional.pad(result["y_hat"][:,:,padding_y:-padding_y,padding_y:-padding_y], padder_y, mode=args.padding_mode)
@@ -489,15 +485,9 @@ def attack_(im_s, net, args):
     # LOSS_FUNC = args.att_metric
     noise_range = args.epsilon/255.0
     epsilon = args.noise
-
-    if args.model == "debug":
-        noise = torch.Tensor(im_s.size()).uniform_(-epsilon**0.5,epsilon**0.5)
-    else:
-        noise = torch.zeros(im_s.size())
-
+    noise = torch.zeros(im_s.size())
     if args.random > 1:
         noise = torch.Tensor(im_s.size()).uniform_(-1e-2,1e-2)
-        
     noise = noise.cuda().requires_grad_(True) # set requires_grad=True after moving tensor to device
     optimizer = torch.optim.Adam([noise], lr=args.lr_attack)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [1,2,3], gamma=0.33, last_epoch=-1)
@@ -511,10 +501,7 @@ def attack_(im_s, net, args):
 
         # if args.pad:
             # noise_clipped = torch.nn.functional.pad(noise_clipped, (args.pad,args.pad, args.pad, args.pad), mode='constant', value=0)
-        if args.model == "debug":
-            im_in = im_s + noise_clipped
-        else:
-            im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
+        im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
 
         if batch_attack:
             loss_i_batch = torch.mean((im_s - im_in) ** 2, (1,2,3))
@@ -559,18 +546,7 @@ def attack_(im_s, net, args):
                 net = net.train()
                 # coder.write_image(output_, "%s_out_%d_%0.8f.png"%(filename, i, loss.item()), H, W)
     # noise = noise_clipped
-    im_in = im_in.to(torch.get_default_dtype())
-    im_s = im_s.to(torch.get_default_dtype())        
-    net = net.to(torch.get_default_dtype())
-    # net.eval()
-    # output_s = net(im_s)["x_hat"]
-    if args.model == "debug":
-        noise = im_in - im_s        
-        for i in np.arange(0, 10, 0.5):
-            im_in = im_s + noise.to(torch.get_default_dtype()) / 2**(3*i)
-            eval(im_in, im_s, output_s, net, args)
-    else:
-        im_adv, output_adv, bpp, mse_results, vi_results = eval(im_in, im_s, output_s, net, args) 
+    im_adv, output_adv, bpp, mse_results, vi_results = eval(im_in, im_s, output_s, net, args) 
 
     return im_adv, output_adv, output_s, bpp_ori, bpp, mse_results, vi_results
 
@@ -591,7 +567,7 @@ class attacker:
     def attack(self, image_file, crop=None):
         C = 3
         im_s, H, W = coder.read_image(image_file)
-        im_s = im_s.to(self.args.device).to(torch.get_default_dtype())
+        im_s = im_s.to(self.args.device)
 
         if self.args.debug:
             # self.y_main_s = torch.round(self.net.g_a(im_s))
@@ -685,7 +661,7 @@ def batch_attack(args):
     else:
         vi_msim = None
     bpp_ori, bpp, vi, vi_anchor, t = bpp_ori_/num_im, bpp_/num_im, vi_/num_im, vi_anchor_/num_im, t_/num_im
-    print(f"AVG: {args.model}-{args.metric}-{args.quality}", bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi, "vi_anchor:", vi_anchor, vi_msim, t)
+    print(f"AVG: {args.model}-{args.metric}-{args.quality}", bpp_ori, bpp, (bpp-bpp_ori)/bpp_ori, vi, vi_anchor, vi_msim, t)
     if args.debug:
         # y_main_s = torch.mean(torch.abs(torch.cat(y_main_s, dim=0)), dim=0, keepdim=True)
         # y_main_adv = torch.mean(torch.abs(torch.cat(y_main_adv, dim=0)), dim=0, keepdim=True)

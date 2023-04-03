@@ -1,22 +1,38 @@
 import torch
 import torch.nn as nn
 from compressai.zoo import bmshj2018_factorized, bmshj2018_hyperprior, mbt2018, cheng2020_anchor
-from compressai.models import CompressionModel, FactorizedPrior
+from compressai.models import CompressionModel, FactorizedPrior, MeanScaleHyperprior
 from compressai.layers import GDN
 from .utils import conv, deconv
 
-class ae_onelayer(FactorizedPrior):
+# class ae_onelayer(FactorizedPrior):
+class ae_onelayer(MeanScaleHyperprior):    
     # Autoencoder with only 1 conv layer for both encoder & decoder
     def __init__(self, N, M, **kwargs):
         super().__init__(N=N, M=M, **kwargs)
         self.g_a = nn.Sequential(
-            conv(3, M),
+            conv(3, M, kernel_size=3, stride=1),
         )
 
         self.g_s = nn.Sequential(
-            deconv(M, 3),
+            deconv(M, 3, kernel_size=3, stride=1),
         )
 
+    def forward(self, x):
+        y = self.g_a(x)
+        z = self.h_a(y)
+        z_hat, z_likelihoods = self.entropy_bottleneck(z)
+        gaussian_params = self.h_s(z_hat)
+        scales_hat, means_hat = gaussian_params.chunk(2, 1)
+        y_hat, y_likelihoods = self.gaussian_conditional(y, scales_hat, means=means_hat)
+        
+        # x_hat = self.g_s(y_hat)
+        x_hat = self.g_s(y)
+
+        return {
+            "x_hat": x_hat,
+            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
+        }
 class balle_relu(FactorizedPrior):
     # Autoencoder with only 1 conv layer for both encoder & decoder
     def __init__(self, N, M, **kwargs):
@@ -45,9 +61,12 @@ def init_model(MODEL, quality, metric, pretrained=True):
         if MODEL == "debug":
             assert not pretrained, "No download-able model available!"
             if quality <= 5:
-                net = balle_relu(N=128, M=192)
+                # net = balle_relu(N=128, M=192)
+                net = ae_onelayer(N=3, M=192)
             else:
-                net = balle_relu(N=192, M=320)
+                # net = balle_relu(N=192, M=320)
+                net = ae_onelayer(N=3, M=192)
+                
         if MODEL == "factorized":
             net = bmshj2018_factorized(quality=quality, metric=metric, pretrained=pretrained)
         if MODEL == "hyper":

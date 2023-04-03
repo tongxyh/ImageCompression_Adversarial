@@ -185,7 +185,7 @@ def config():
     parser.add_argument('-m',      dest='model',  type=str, default="hyper", help="compress model in 'factor','hyper','context','cheng2020','nonlocal'")
     parser.add_argument('-metric', dest='metric', type=str, default="ms-ssim",  help="mse or ms-ssim")
     parser.add_argument('-q',      dest='quality',type=int, default="3",        help="quality in [1-8]")
-    parser.add_argument('--new',   dest='new', action='store_true', help='new model')
+    parser.add_argument('--new',   dest='new', action='store_true', help='train new model')
     parser.add_argument('-padmode',dest='padding_mode', type=str, default="reflect", help="pad mode")
     # attack config
     parser.add_argument('-steps',dest='steps',      type=int,   default=1001,  help="attack iteration steps")

@@ -173,8 +173,19 @@ def defend(net, x, method="ensemble"):
 @torch.no_grad()
 def eval(im_adv, im_s, output_s, net, args):
     net.eval()
-    im_uint8 = torch.round(im_adv * 255.0)/255.0
-    im_ =  torch.clamp(im_uint8, min=0., max=1.0)
+    if args.clamp:
+        # im_uint8 = torch.round(im_adv * 255.0)/255.0
+        
+        im_uint8 = im_adv
+        
+        im_ = torch.clamp(im_uint8, min=0., max=1.0)
+    else:
+        if args.model == "debug":
+            im_uint8 = im_adv
+        else:    
+            im_uint8 = im_adv
+        #     im_uint8 = torch.round(im_adv * 255.0)/255.0
+        im_ = im_uint8
 
     result = net(im_)
 
@@ -213,7 +224,7 @@ def eval(im_adv, im_s, output_s, net, args):
     mse_out = torch.mean((output_ - output_s)**2)
     msim_out = ms_ssim(output_, output_s, data_range=1., size_average=True).item()
     vi_results = {}
-    mse_results = {"mse_in": mse_in, "mse_out": mse_out}
+    mse_results = {"mse_in": mse_in.item(), "mse_out": mse_out.item()}
     msim_in = ms_ssim(im_, im_s, data_range=1., size_average=True).item()
     if args.method == "resize" or args.method == "bitdepth":
         # mse_results["mse_in_pre"] = torch.mean((x - im_pre)**2) # x_adv after preprocess, im_s after preprocess
@@ -223,16 +234,15 @@ def eval(im_adv, im_s, output_s, net, args):
         # mse_resize = torch.mean((im_s - im_up)**2)
         # mse_out_resize = torch.mean((output_ - output_up)**2)
     # print(-10*math.log10(mse_out), mse_in)
+    vi_results["vi"], vi_results["vi_msim"] = None, None
     if mse_in > 1e-20 and mse_out > 1e-20:
         vi_results["vi"] = 10. * math.log10(mse_out/mse_in)
-        if not args.adv:
+        if not args.adv: # not adversairal training
             if msim_in < 0.9999:
                 vi_results["vi_msim"] =  10. * math.log10((1-msim_out)/(1-msim_in))
-        else:
-            vi_results["vi_msim"] =  None
     else:
-        vi_results["vi"], vi_results["vi_msim"] = None, None
         print(f"[!] Warning: mse_in ({mse_in}) or mse_out {mse_out} is zero")
+    
     if args.debug:
         print(mse_results, vi_results)
         print("MS-SSIM in/out:", msim_in, msim_out)
@@ -312,7 +322,7 @@ def attack_(im_s, net, args):
                 _, _, bpp, mse_results, vi_results = eval(im_in, im_s, output_s, net, args)    
                 net = net.train()
 
-    im_adv, output_adv, bpp, mse_results, vi_results = eval(im_in, im_s, output_s, net, args) 
+    im_adv, output_adv, bpp, mse_results, vi_results = eval(im_in, im_s, output_s, net, args)     
     return im_adv, output_adv, output_s, bpp_ori, bpp, mse_results, vi_results
 
 class defender:

@@ -197,15 +197,11 @@ def test_epoch(epoch, test_dataloader, model, criterion, log_dir, args):
     model.eval()
     device = next(model.parameters()).device
 
-    loss = AverageMeter()
-    bpp_loss = AverageMeter()
+    loss, bpp_loss, aux_loss, d_loss = [AverageMeter() for _ in range(4)]
     mse_loss = AverageMeter()
-    aux_loss = AverageMeter()
     msim_loss = AverageMeter()
-    d_loss = AverageMeter()
+    f1_loss = AverageMeter()
     
-    if args.recompress:
-        f1_loss = AverageMeter()
     if args.adv:
         vi_loss = AverageMeter()
 
@@ -370,19 +366,19 @@ def train(args):
                     aux_optimizer.step()
             else:
                 image_comp.train()
-                # result = image_comp(batch_x)
+                result = image_comp(batch_x)
                 
-                y = image_comp.g_a(batch_x)
-                z = image_comp.h_a(torch.abs(y))
-                z_hat, z_likelihoods = image_comp.entropy_bottleneck(z)
-                scales_hat = image_comp.h_s(z_hat)
-                y_hat, y_likelihoods = image_comp.gaussian_conditional(y, scales_hat)
-                x_hat = image_comp.g_s(y_hat)
+                # y = image_comp.g_a(batch_x)
+                # z = image_comp.h_a(torch.abs(y))
+                # z_hat, z_likelihoods = image_comp.entropy_bottleneck(z)
+                # scales_hat = image_comp.h_s(z_hat)
+                # y_hat, y_likelihoods = image_comp.gaussian_conditional(y, scales_hat)
+                # x_hat = image_comp.g_s(y_hat)
 
-                result = {
-                    "x_hat": x_hat,
-                    "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
-                }
+                # result = {
+                #     "x_hat": x_hat,
+                #     "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
+                # }
         
                 out_criterion = criterion(result, batch_x)
                 if args.recompress:
