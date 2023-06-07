@@ -50,11 +50,13 @@ Feel free to contact us if there is any question. (Tong Chen, tong@smail.nju.edu
 
 # Citation
 ```
-@misc{chen2021robust,
-      title={Towards Robust Neural Image Compression: Adversarial Attack and Model Finetuning}, 
-      author={Tong Chen and Zhan Ma},
-      year={2021},
-      eprint={2112.08691},
-      archivePrefix={arXiv},
-}
+@ARTICLE{chen2021robust,
+  author={Chen, Tong and Ma, Zhan},
+  journal={IEEE Transactions on Circuits and Systems for Video Technology}, 
+  title={Towards Robust Neural Image Compression: Adversarial Attack and Model Finetuning}, 
+  year={2023},
+  volume={},
+  number={},
+  pages={1-1},
+  doi={10.1109/TCSVT.2023.3276442}}
 ```
