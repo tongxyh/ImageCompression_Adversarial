@@ -3,7 +3,7 @@ Deep neural network-based image compression has been extensively studied. Howeve
 We propose to examine the robustness of prevailing learned image compression models by injecting negligible adversarial perturbation into the original source image. Severe distortion in decoded reconstruction reveals the general vulnerability in existing methods regardless of compression  settings (e.g., network architecture, loss function, quality scale). We then explore possible defense strategies against the adversarial attack to improve the model robustness, including geometric self-ensemble based pre-processesing, and adversarial training. Experiments report the effectiveness of various defense strategies. Additional image recompression case study further confirms the substantial improvement of the robustness of compression models in real-life applications. Overall, our methodology is simple, effective, and generalizable, making it attractive for developing robust learned image compression solutions.
 
 # User Guide
-## Distorion Attack
+## Distortion Attack
 ```
 # Balle2016, Balle2018, Minnen, Cheng2020
 python attack_rd.py  -m facotorized/hyper/context/cheng2020 -metric mse/ms-ssim -q [1-8] -s <source_image>
