@@ -20,6 +20,7 @@ import math
 import os
 import sys
 import time
+from glob import glob
 
 from collections import defaultdict
 from typing import List
@@ -79,6 +80,14 @@ def read_image(filepath: str) -> torch.Tensor:
     # return test_transforms(img)
 
     return transforms.ToTensor()(img)
+
+def write_image(x, filename, H=None, W=None):
+    if H == None and W == None:
+        H, W = x.shape[2:]
+    x = np.round(x.data[0].cpu().numpy() * 255.0)
+    x = x.astype('uint8').transpose(1, 2, 0)
+    img = Image.fromarray(x[:H, :W, :])
+    img.save(filename)
 
 @torch.no_grad()
 def inference(model, x, savedir = "", idx = 1):
@@ -170,7 +179,16 @@ def attack(args, model, filepath):
     device = next(model.parameters()).device
     x = read_image(filepath).to(device)
     filename = filepath.split("/")[-1][:-4]
-    x = x.unsqueeze(0)  
+    x = x.unsqueeze(0) 
+
+    # get original bitrate & reconstruction image
+    with torch.no_grad():
+        model.eval()
+        result = model(x)
+        x_hat_s = result["x_hat"]
+        num_pixels = x.size(0) * x.size(2) * x.size(3)
+        bpp_ori = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
+
     noise = torch.zeros(x.size())
 
     # x = x.half()
@@ -183,54 +201,33 @@ def attack(args, model, filepath):
     
     steps = args.steps
     for i in range(args.steps):  
-        im_in = torch.clamp(x+noise, min=0., max=1.0)
-        y = model.g_a_func(im_in)
-        
-        # noise or round
-        half = float(0.5)
-        uni_noise = torch.empty_like(y).uniform_(-half, half)
-        y_hat = y + uni_noise
-        # y_hat = y
-
-        x_hat = torch.clamp(model.g_s_func(y_hat), min=0., max=1.)
-        
-        # loss
-        loss_in = torch.mean(noise**2)
-        loss_out = 1. - torch.mean((x_hat - x)**2)
-        if loss_in > 0.001:
-            loss = loss_in
+        noise_clip = torch.clamp(noise, -16/255.0, 16/255.0)
+        im_in = torch.clamp(x+noise_clip, min=0., max=1.0)
+        loss_i = torch.mean(noise_clip**2)
+        if loss_i > 0.0001:
+            loss = loss_i
+            loss_o = torch.Tensor([0.])
         else:
-            loss = loss_out
+            y = model.g_a_func(im_in)
+            # noise or round
+            # half = float(0.5)
+            # uni_noise = torch.empty_like(y).uniform_(-half, half)
+            # y_hat = y + uni_noise
+            y_hat = y
+            x_hat = torch.clamp(model.g_s_func(y_hat), min=0., max=1.)
+            loss_o = 1. - torch.mean((x_hat - x_hat_s)**2)
+            loss = loss_o
+
         # optimize
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         # print(i, "loss (in , out):", loss_in.item(), loss_out.item())
         if i % 100 == 0:
-            print(i, "loss (in , out):", loss_in.item(), loss_out.item())
-            im_uint8 = torch.round(im_in * 255.0)/255.0
-
-            im_ =  torch.clamp(im_uint8, min=0., max=1.0)
-            fin = im_.data[0].cpu().numpy()
-            fin = np.round(fin * 255.0)
-            fin = fin.astype('uint8')
-            fin = fin.transpose(1, 2, 0)
-            img = Image.fromarray(fin)
-            img.save("./attack/fake_in.png") 
-
-            with torch.no_grad():
-                y_round = torch.round(y)
-                x_final = torch.clamp(model.g_s_func(y_round), min=0., max=1.)
-
-            im_uint8 = torch.round(x_final * 255.0)/255.0
-
-            im_ =  torch.clamp(im_uint8, min=0., max=1.0)
-            fin = im_.data[0].cpu().numpy()
-            fin = np.round(fin * 255.0)
-            fin = fin.astype('uint8')
-            fin = fin.transpose(1, 2, 0)
-            img = Image.fromarray(fin)
-            img.save("./attack/fake_out.png")
+            print(i, "loss_rec", loss_o.item(), "loss_in", loss_i.item(), "VI (mse):", (1.-loss_o.item())/(loss_i.item()+1e-10))
+            # with torch.no_grad():
+            #     y_round = torch.round(y)
+            #     x_final = torch.clamp(model.g_s_func(y_round), min=0., max=1.)
 
         if i % (steps//3) == 0:
             # print("step:", i, "overall loss:", loss.item())
@@ -238,27 +235,22 @@ def attack(args, model, filepath):
         if i == steps-1:
             with torch.no_grad():
                 # save adverserial input
-                im_uint8 = torch.round((x+noise) * 255.0)/255.0
-                
-                # 1. NO PADDING
-                # im_uint8[:,:,H:,:] = 0.
-                # im_uint8[:,:,:,W:] = 0.
-                
-                im_ =  torch.clamp(im_uint8, min=0., max=1.0)
-                fin = im_.data[0].cpu().numpy()
-                fin = np.round(fin * 255.0)
-                fin = fin.astype('uint8')
-                fin = fin.transpose(1, 2, 0)
-                # img = Image.fromarray(fin[:H, :W, :])
-                img = Image.fromarray(fin)
-                img.save("./attack/fake%d_in_%0.8f.png"%(i, loss.item())) 
-
-                rv = inference(model.float().cpu(), x[0].float().cpu()+noise[0].float().cpu(), savedir=args.savedir, idx=filename+'_'+str(steps))
-                bpp = rv['bpp']
-                print("bpp:", rv['bpp'])
-                print('psnr', rv['psnr'])
-                print('ms-ssim', rv['ms-ssim'])
-
+                im_uint8 = torch.round(torch.clamp(x+noise_clip, min=0., max=1.) * 255.0)/255.0
+                result = model(im_uint8)
+                x_hat = torch.clamp(result["x_hat"], min=0., max=1.)
+                # rv = inference(model, im_uint8, args.savedir, 0)
+                bpp_adv = sum((torch.log(likelihoods).sum() / (-math.log(2) * num_pixels)) for likelihoods in result["likelihoods"].values())
+                mse_in = torch.mean((im_uint8 - x)**2)
+                mse_out = torch.mean((x_hat - x_hat_s)**2)
+                write_image(im_uint8, os.path.join(args.savedir, filename+"_advin.png"))
+                write_image(x_hat, os.path.join(args.savedir, filename+"_advout.png"))
+                write_image(noise_clip+0.5, os.path.join(args.savedir, filename+"_advnoise.png"))
+                # rv = inference(model.float().cpu(), x[0].float().cpu()+noise[0].float().cpu(), savedir=args.savedir, idx=filename+'_'+str(steps))
+                # print("bpp:", rv['bpp'])
+                # print('psnr', rv['psnr'])
+                # print('ms-ssim', rv['ms-ssim'])
+                print(bpp_ori, bpp_adv, (mse_out/mse_in).item(), "[result]")
+                return bpp_ori.item(), bpp_adv.item(), (mse_out/mse_in).item()
 
 def eval_model(model, filepaths, entropy_estimation=False, half=False, savedir = ""):
     device = next(model.parameters()).device
@@ -291,7 +283,7 @@ def setup_args():
     )
     
     parent_parser.add_argument("-steps", type=int, help="attack steps")
-    parent_parser.add_argument("-lr", type=float, help="attack learning rate")
+    parent_parser.add_argument("-lr", type=float, default=0.01, help="attack learning rate")
 
     # Common options.
     parent_parser.add_argument("dataset", type=str, help="dataset path")
@@ -413,8 +405,16 @@ def main(argv):
         if args.cuda and torch.cuda.is_available():
             model = model.to("cuda")
         # metrics = eval_model(model, filepaths, args.entropy_estimation, args.half, args.savedir)
-        attack(args, model, args.dataset)
-
+        bpp_ori, bpp_adv, vi = [], [], []
+        for image in sorted(glob(args.dataset)):
+            bpp_ori_, bpp_adv_, vi_ = attack(args, model, image)
+            bpp_ori.append(bpp_ori_)
+            bpp_adv.append(bpp_adv_)
+            vi.append(vi_)
+        bpp_ori = sum(bpp_ori)/len(bpp_ori)
+        bpp_adv = sum(bpp_adv)/len(bpp_adv)
+        vi = sum(vi)/len(vi)
+        print("AVG:", bpp_ori, bpp_adv, vi)
         # for k, v in metrics.items():
         #     results[k].append(v)
 

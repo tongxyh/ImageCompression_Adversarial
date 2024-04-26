@@ -6,33 +6,16 @@ from glob import glob
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+import math
 import numpy as np
 from PIL import Image
-from thop import profile
-
+# from thop import profile
+from pytorch_msssim import ms_ssim
 # from utils import torch_msssim, ops
 import Model.model as model
 from Model.context_model import Weighted_Gaussian
 from Util import ops
 from datetime import datetime
-
-class Gradient_Net(nn.Module):
-  def __init__(self):
-    super(Gradient_Net, self).__init__()
-    kernel_x = [[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]
-    kernel_x = torch.FloatTensor(kernel_x).unsqueeze(0).unsqueeze(0).cuda() # [n_out, n_in, k_x, k_y]
-
-    kernel_y = [[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]]
-    kernel_y = torch.FloatTensor(kernel_y).unsqueeze(0).unsqueeze(0).cuda()
-
-    self.weight_x = nn.Parameter(data=kernel_x.repeat(1,3,1,1), requires_grad=False)
-    self.weight_y = nn.Parameter(data=kernel_y.repeat(1,3,1,1), requires_grad=False)
-
-  def forward(self, x):
-    grad_x = nn.functional.conv2d(x, self.weight_x, padding=1)
-    grad_y = nn.functional.conv2d(x, self.weight_y, padding=1)
-    gradient = torch.tanh(torch.abs(grad_x) + torch.abs(grad_y))
-    return gradient
 
 
 def add_noise(x):
@@ -40,7 +23,7 @@ def add_noise(x):
     noise = torch.Tensor(noise).cuda()
     return x + noise
 
-def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
+def attack(args, image, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     TRAINING = True
     dev_id = "cuda:0"
@@ -90,7 +73,7 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
     #msssim_func = msssim_func.cuda()
 
     # img_s = Image.open(source_dir).resize((16,16))
-    img_s = Image.open(args.source)
+    img_s = Image.open(image)
     # img_s = np.array(img_s)/255.0/5.0+0.5
     img_s = np.array(img_s)/255.0
     filename = args.source.split("/")[-1][:-4]
@@ -152,7 +135,8 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
         ori_bpp_hyper = torch.sum(torch.log(p_hyper)) / (-np.log(2.) * num_pixels)
         ori_bpp_main = torch.sum(torch.log(p_main)) / (-np.log(2.) * num_pixels)
-        print("Original bpp:", ori_bpp_hyper + ori_bpp_main)
+        bpp_ori = ori_bpp_hyper + ori_bpp_main
+        print("Original bpp:", bpp_ori)
         # print("Original PSNR:", )
         # print("Original MS-SSIM:", )
     
@@ -184,43 +168,22 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             noise_clipped = ops.Up_bound.apply(ops.Low_bound.apply(noise, -noise_range), noise_range)
             # im_in = torch.clamp(im_s+noise_clipped, min=0., max=1.0)
             im_in = ops.Up_bound.apply(ops.Low_bound.apply(im_s+noise_clipped, 0.), 1.)
-            if args.target != None:
-                im_in = torch.clamp(im_s+noise, min=0., max=1.0)
+            im_in = torch.clamp(im_s+noise, min=0., max=1.0)
             # print("noised:",im_in)
             # print("source:",im_s)
             # 1. NO PADDING
             im_in[:,:,H:,:] = 0.
             im_in[:,:,:,W:] = 0.
-            
-            output, _, _, _, _ = image_comp(im_in, TRAINING)
 
-            # output_ = torch.clamp(output, min=0., max=1.0)
-            output_ = ops.Up_bound.apply(ops.Low_bound.apply(output, 0.), 1.)
-            if LOSS_FUNC == "L2":
-                loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
-                if args.target == None:
-                    # loss_o = torch.mean((output_s - output_) * (output_s - output_)) # MSE(y_s, y_)
-                    loss_o = 1. - torch.mean((im_s - output_) * (im_s - output_)) # MSE(x_, y_)
-                else:
-                    # loss_o = torch.mean((output_t - output_) * (output_t - output_)) # MSE(y_t, y_s)
-                    loss_o = torch.mean((im_t - output_) * (im_t - output_)) # MSE(y_t, y_s)
-
-            # L1 loss
-            if LOSS_FUNC == "L1":
-                loss_i = torch.mean(torch.abs(im_s - im_in))
-                if args.target == None:
-                    loss_o = 1.0 - torch.mean(torch.abs(im_s - output_))
-                else:    
-                    loss_o = torch.mean(torch.abs(output_t - output_))
-            
-            if LOSS_FUNC == "masked":
-                loss_i = torch.mean((im_s - im_in) * (im_s - im_in)) * mask_tar + lamb_bkg * torch.mean((im_s - im_in) * (im_s - im_in)) * mask_bkg
-                loss_o = torch.mean((output_t - output_) * (output_t - output_)) * mask_tar
-
+            loss_i = torch.mean((im_s - im_in) * (im_s - im_in))                
             # loss = loss_i + lamb * loss_o
-            if loss_i >= 0.001: # PSNR=30dB
+            if loss_i >= 0.0001: # PSNR=40dB
                 loss = loss_i
             else:
+                output, _, _, _, _ = image_comp(im_in, TRAINING)
+                # output_ = torch.clamp(output, min=0., max=1.0)
+                output_ = ops.Up_bound.apply(ops.Low_bound.apply(output, 0.), 1.)
+                loss_o = 1. - torch.mean((output_s - output_) * (output_s - output_)) # MSE(x_, y_)
                 loss = loss_o
             
             # noise_range = 0.9999*noise_range + 0.0001*50/255
@@ -240,12 +203,6 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
             loss.backward()
             optimizer.step()
 
-            if args.log:
-                writer.add_scalar('Loss/mse_all', loss.item(), i)
-                writer.add_scalar('Loss/mse_in', mse_i.item(), i)
-                writer.add_scalar('Loss/mse_out',  mse_o.item(), i)
-                writer.add_scalar('Loss/bpp',  bpp.item(), i)
-
             # if i % (args.steps//30) == 0:
             if i % 1000 == 0:    
                 # print(torch.mean(mask), torch.mean(att))
@@ -254,18 +211,17 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
                     lr_scheduler.step()
 
                 with torch.no_grad():
-                    im_uint8 = torch.round(im_in * 255.0)/255.0
+                    mse_in = torch.mean((im_in - im_s)**2)
+                    msim_in = ms_ssim(im_in, im_s, data_range=1., size_average=True).item()
                     
+                    # save adverserial input
+                    im_uint8 = torch.round(im_in * 255.0)/255.0
                     # 1. NO PADDING
                     # im_uint8[:,:,H:,:] = 0.
                     # im_uint8[:,:,:,W:] = 0.
-                    
-                    # save adverserial input
                     im_ =  torch.clamp(im_uint8, min=0., max=1.0)
                     # print(torch.min(im_), torch.max(im_))
                     # im_ =  torch.clamp(im, min=0., max=1.0)
-                    # torch.set_printoptions(threshold=1000000)
-                    # print(im_)
                     fin = im_.data[0].cpu().numpy()
                     fin = np.round(fin * 255.0)
                     fin = fin.astype('uint8')
@@ -300,6 +256,10 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     # original recons
     output_ = torch.clamp(output_s, min=0., max=1.0)
+
+    mse_out = torch.mean((output_s - output)**2)
+    msim_out = ms_ssim(output_s, output, data_range=1., size_average=True).item()
+
     out = output_.data[0].cpu().numpy()
     out = np.round(out * 255.0)
     out = out.astype('uint8')
@@ -307,9 +267,8 @@ def attack(args, checkpoint_dir, CONTEXT=True, POSTPROCESS=True, crop=None):
 
     img = Image.fromarray(out[:H, :W, :])
     img.save("./attack/kodak/origin_out.png")
-
-    return 0, 0
-
+    
+    return bpp_ori, bpp, 10*math.log10(mse_out/mse_in), 10. * math.log10((1-msim_out)/(1-msim_in))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -330,9 +289,9 @@ if __name__ == "__main__":
     parser.add_argument('-q',      dest='quality',type=int, default="2",        help="quality in [1-8]")
     
     # attack config
-    parser.add_argument('-steps',dest='steps',      type=int,   default=10001,  help="attack iteration steps")
+    parser.add_argument('-steps',dest='steps',      type=int,   default=1001,  help="attack iteration steps")
     parser.add_argument("-la",  dest="lamb_attack", type=float, default=0.2,    help="attack lambda")
-    parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.001,  help="attack learning rate")
+    parser.add_argument("-lr",  dest="lr_attack",   type=float, default=0.01,  help="attack learning rate")
     parser.add_argument("-s",   dest="source",      type=str,   default=None,   help="source input image")
     parser.add_argument("-t",   dest="target",      type=str,   default=None,   help="target image")
 
@@ -344,28 +303,15 @@ if __name__ == "__main__":
     checkpoint = "Weights/"
     # print("[CONTEXT]:", args.context)
     print("==== Loading Checkpoint:", checkpoint, '====')
-    
-    ## random select in 0
-    # target = "/ct/code/mnist_png/testing/0/294.png"
-    ## random select in [1-9]
-    # source = "/home/tong/mnist_png/testing/9/281.png"
-    # source = "/home/tong/mnist_png/testing/8/110.png"
-    # source = "/home/tong/mnist_png/testing/7/411.png"
-    # source = "/home/tong/mnist_png/testing/6/940.png"
-    # source = "/home/tong/mnist_png/testing/5/509.png"
-    # source = "/home/tong/mnist_png/testing/4/109.png"
-    # source = "/home/tong/mnist_png/testing/3/1426.png"
-    # source = "/ct/code/mnist_png/testing/2/72.png"
-    # source = "/home/tong/mnist_png/testing/1/430.png"
-
-    # target = "/ct/code/LearnedCompression/attack/colorattacker.png"
-    # source = "/ct/code/LearnedCompression/attack/colorchecker.png"
-
-    # target = "/ct/code/LearnedCompression/attack/licenseplate/MZ8723_180x180.png" 
-    # source = "/ct/code/LearnedCompression/attack/licenseplate/MZ2837_180x180.png"
-
-    # target = "/home/tong/LearnedCompression/mnist/tmp/roof_angle.png"
-    # source = "/home/tong/LearnedCompression/mnist/tmp/roof_psnr.png"
-
-    bpp, psnr = attack(args, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
-    # print(checkpoint, "bpps:%0.4f, psnr:%0.4f" %(bpp, psnr))
+    images = sorted(glob(args.source))
+    bpp_ori_, bpp_, vi_, vi_msim_ = 0., 0., 0., 0.
+    for image in images:
+        bpp_ori, bpp_adv, vi, vi_msim = attack(args, image, checkpoint, CONTEXT=args.context, POSTPROCESS=args.post, crop=None)
+        print(image, bpp_ori, bpp_adv, vi)
+        bpp_ori_ += bpp_ori
+        bpp_ += bpp_adv
+        vi_ += vi
+        vi_msim_ += vi_msim
+    bpp_ori, bpp, vi, vi_msim = bpp_ori_/len(images), bpp_/len(images), vi_/len(images), vi_msim_/len(images)
+    dbpp = (bpp-bpp_ori)/bpp_ori
+    print("AVG:", args.quality, bpp_ori.item(), bpp.item(), dbpp.item(), vi, vi_msim)
