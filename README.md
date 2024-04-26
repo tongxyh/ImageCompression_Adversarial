@@ -46,7 +46,7 @@ python attack_rd.py --mask <user_defined_bounding_box> -la_bkg 0.01 -n 0.002 \
 ```
 
 # Contact
-Feel free to contact us if there is any question. (Tong Chen, tong@smail.nju.edu.cn; Zhan Ma, mazhan@nju.edu.cn)
+Feel free to contact us if there are any questions. (Tong Chen, chentong@nju.edu.cn; Zhan Ma, mazhan@nju.edu.cn)
 
 # Citation
 ```
